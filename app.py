@@ -1,16 +1,13 @@
 import os
-from flask import Flask, request, jsonify, render_template
-from estimator import EmbeddingsFaissEstimator
 from pathlib import Path
 import shutil
+from flask import Flask, request, jsonify, render_template
+from estimator import EmbeddingsFaissEstimator, train_index_per_type, DATA_DIR
 
-# --- SEED PERSISTENTE PARA RENDER ---
+# -------- Seed de /var/data con los CSV del repo --------
 def seed_persistent_data_dir():
-    # DATA_DIR: en Render será /var/data (persistente)
     data_dir = Path(os.environ.get("DATA_DIR", "/var/data"))
-    # Carpeta data del repo (no persistente)
     repo_data_dir = Path(__file__).parent / "data"
-
     data_dir.mkdir(parents=True, exist_ok=True)
 
     seed_files = [
@@ -18,33 +15,31 @@ def seed_persistent_data_dir():
         "EstimacionesPSTC.csv",
         "catalogo_cesq.csv",
         "catalogo_pstc.csv",
-        "estimaciones_nuevas.csv",  # si no existe, se creará
+        "estimaciones_nuevas.csv",
     ]
-
-    for fname in seed_files:
-        src = repo_data_dir / fname
-        dst = data_dir / fname
+    for name in seed_files:
+        src = repo_data_dir / name
+        dst = data_dir / name
         if src.exists() and not dst.exists():
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
 
-    # asegura que exista el archivo para nuevas estimaciones
+    # Asegura archivo de nuevas estimaciones
     (data_dir / "estimaciones_nuevas.csv").touch(exist_ok=True)
-# --- FIN SEED ---
 
-# Sembrar antes de crear la app
 seed_persistent_data_dir()
+# ---------------------------------------------------------
 
 app = Flask(__name__)
 
 @app.route("/")
 def index():
+    # Intenta cargar; si no existe índice, entrena con catálogos/históricos
     try:
-        estimator = EmbeddingsFaissEstimator("desarrollo")
-        estimator.load()
+        EmbeddingsFaissEstimator("desarrollo").load()
     except Exception:
         try:
-            estimator.train_index_per_type()
+            train_index_per_type()
         except Exception as e:
             return f"WARN: No se pudo entrenar índices al iniciar: {e}", 500
     return render_template("index.html")
@@ -52,34 +47,38 @@ def index():
 @app.route("/retrain", methods=["POST", "GET"])
 def retrain():
     try:
-        EmbeddingsFaissEstimator("desarrollo").train_index_per_type()
-        EmbeddingsFaissEstimator("implementacion").train_index_per_type()
-        return "Índices reentrenados", 200
+        counts = train_index_per_type()
+        return jsonify({"ok": True, "rows": counts})
     except Exception as e:
-        return f"ERROR al reentrenar: {e}", 500
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/api/estimar", methods=["POST"])
 def api_estimar():
-    data = request.get_json()
+    data = request.get_json(force=True)
     tipo = data.get("tipo", "desarrollo")
     texto = data.get("texto", "")
     try:
-        estimator = EmbeddingsFaissEstimator(tipo)
-        estimator.load()
-        horas = estimator.estimate_hours(texto)
-        return jsonify({"horas": horas})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        est = EmbeddingsFaissEstimator(tipo)
+        est.load()
+    except Exception:
+        train_index_per_type()
+        est = EmbeddingsFaissEstimator(tipo)
+        est.load()
 
-# Debug opcional para Render
+    _, results = est.predict(texto, k=5)
+    # Promedio simple de horas de los K vecinos con horas válidas
+    horas_vecinas = [r[2] for r in results if r[2] is not None]
+    horas = round(sum(horas_vecinas) / len(horas_vecinas), 2) if horas_vecinas else None
+    return jsonify({"horas": horas, "vecinos": results})
+
+# Debug opcional
 @app.route("/debug-rutas")
 def debug_rutas():
-    from estimator import DATA_DIR
     import glob
     return {
         "cwd": os.getcwd(),
         "DATA_DIR": str(DATA_DIR),
-        "ls_DATA_DIR": sorted([os.path.basename(p) for p in glob.glob(str(Path(os.environ.get("DATA_DIR", "/var/data")) / "*"))]),
+        "ls_DATA_DIR": sorted([os.path.basename(p) for p in glob.glob(str(DATA_DIR / '*'))]),
     }, 200
 
 if __name__ == "__main__":
