@@ -2,9 +2,9 @@ import os
 from pathlib import Path
 import shutil
 from flask import Flask, request, jsonify, render_template
-from estimator import EmbeddingsFaissEstimator, train_index_per_type, DATA_DIR
+from jinja2 import TemplateNotFound
 
-# -------- Seed de /var/data con los CSV del repo --------
+# --- SEED persistente: copia CSV del repo a /var/data si falta ---
 def seed_persistent_data_dir():
     data_dir = Path(os.environ.get("DATA_DIR", "/var/data"))
     repo_data_dir = Path(__file__).parent / "data"
@@ -24,49 +24,61 @@ def seed_persistent_data_dir():
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
 
-    # Asegura archivo de nuevas estimaciones
+    # archivo de nuevas estimaciones siempre presente
     (data_dir / "estimaciones_nuevas.csv").touch(exist_ok=True)
 
 seed_persistent_data_dir()
-# ---------------------------------------------------------
+# ---------------------------------------------------------------
+
+from estimator import (
+    EmbeddingsFaissEstimator,
+    train_index_per_type,
+    DATA_DIR,
+)
 
 app = Flask(__name__)
 
 @app.route("/")
 def index():
-    # Intenta cargar; si no existe índice, entrena con catálogos/históricos
+    # No entrenamos al arrancar para ahorrar memoria.
+    # Si existe índice, la UI funcionará; si no, que el usuario dispare /retrain.
     try:
-        EmbeddingsFaissEstimator("desarrollo").load()
+        est = EmbeddingsFaissEstimator("desarrollo")
+        est.load()
+        status = "ok"
     except Exception:
-        try:
-            train_index_per_type()
-        except Exception as e:
-            return f"WARN: No se pudo entrenar índices al iniciar: {e}", 500
-    return render_template("index.html")
+        status = "no_index"
+    # Renderiza plantilla si existe; si no, responde simple
+    try:
+        return render_template("index.html", status=status)
+    except TemplateNotFound:
+        return jsonify({"status": status, "message": "UI simple: usa /retrain o /api/estimar"}), 200
 
 @app.route("/retrain", methods=["POST", "GET"])
 def retrain():
     try:
-        counts = train_index_per_type()
-        return jsonify({"ok": True, "rows": counts})
+        rows = train_index_per_type()
+        return jsonify({"ok": True, "rows": rows})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/api/estimar", methods=["POST"])
 def api_estimar():
-    data = request.get_json(force=True)
+    data = request.get_json(force=True) if request.is_json else request.form
     tipo = data.get("tipo", "desarrollo")
     texto = data.get("texto", "")
+    if not texto:
+        return jsonify({"error": "Falta 'texto'"}), 400
+
+    est = EmbeddingsFaissEstimator(tipo)
     try:
-        est = EmbeddingsFaissEstimator(tipo)
         est.load()
     except Exception:
+        # Entrenamiento on-demand (una sola vez si faltaba el índice)
         train_index_per_type()
-        est = EmbeddingsFaissEstimator(tipo)
         est.load()
 
     _, results = est.predict(texto, k=5)
-    # Promedio simple de horas de los K vecinos con horas válidas
     horas_vecinas = [r[2] for r in results if r[2] is not None]
     horas = round(sum(horas_vecinas) / len(horas_vecinas), 2) if horas_vecinas else None
     return jsonify({"horas": horas, "vecinos": results})
