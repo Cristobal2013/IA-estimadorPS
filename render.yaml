@@ -3,14 +3,24 @@ services:
     name: ia-estimador
     env: python
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: gunicorn -w 2 -k gthread -t 300 -b 0.0.0.0:$PORT app:app
+    startCommand: gunicorn -w 1 -k gthread --threads 1 -t 300 -b 0.0.0.0:$PORT app:app
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.12
-      - key: HF_HOME
-        value: /var/data/hf_cache
       - key: DATA_DIR
         value: /var/data
+      - key: HF_HOME
+        value: /var/data/hf_cache
+      - key: TOKENIZERS_PARALLELISM
+        value: "false"
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
+      - key: EMB_MODEL
+        value: sentence-transformers/all-MiniLM-L6-v2
+      - key: EMB_BATCH
+        value: "32"
     disk:
       name: data
       mountPath: /var/data
