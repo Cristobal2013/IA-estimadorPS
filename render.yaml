@@ -9,3 +9,9 @@ services:
         value: 3.10.12
       - key: HF_HOME
         value: /var/data/hf_cache
+      - key: DATA_DIR
+        value: /var/data
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 2
