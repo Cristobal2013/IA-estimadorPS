@@ -4,7 +4,7 @@ import shutil
 from flask import Flask, request, jsonify, render_template
 from jinja2 import TemplateNotFound
 
-# --- SEED persistente: copia CSV del repo a /var/data si falta ---
+# --- SEED persistente: copia CSV del repo a /var/data si faltan ---
 def seed_persistent_data_dir():
     data_dir = Path(os.environ.get("DATA_DIR", "/var/data"))
     repo_data_dir = Path(__file__).parent / "data"
@@ -38,19 +38,25 @@ from estimator import (
 
 app = Flask(__name__)
 
-@app.route("/")
+@app.route("/", methods=["GET", "HEAD"])
 def index():
-    # No entrenamos al arrancar para ahorrar memoria.
-    # Si existe índice, la UI funcionará; si no, que el usuario dispare /retrain.
+    # Health check de Render: no renderizamos plantilla en HEAD
+    if request.method == "HEAD":
+        return "", 200
+
+    # No entrenamos al arrancar; solo comprobamos si existe el índice
     try:
         est = EmbeddingsFaissEstimator("desarrollo")
         est.load()
         status = "ok"
     except Exception:
         status = "no_index"
-    # Renderiza plantilla si existe; si no, responde simple
+
+    # Pasamos un 'form' default para que el template no falle si lo usa
+    default_form = {"tipo": "desarrollo", "texto": ""}
+
     try:
-        return render_template("index.html", status=status)
+        return render_template("index.html", status=status, form=default_form)
     except TemplateNotFound:
         return jsonify({"status": status, "message": "UI simple: usa /retrain o /api/estimar"}), 200
 
@@ -74,7 +80,7 @@ def api_estimar():
     try:
         est.load()
     except Exception:
-        # Entrenamiento on-demand (una sola vez si faltaba el índice)
+        # Entrenamiento on-demand si falta el índice
         train_index_per_type()
         est.load()
 
