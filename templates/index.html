@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Estimador de Horas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{
+      --bg:#0f172a; --panel:#111827; --card:#0b1220; --muted:#9ca3af;
+      --accent:#60a5fa; --pill:#1f2937; --ok:#16a34a; --err:#dc2626;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:linear-gradient(180deg,#0b1220,#0f172a);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial;color:#e5e7eb}
+    .wrap{max-width:980px;margin:28px auto;padding:0 16px}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+    header h1{font-size:22px;margin:0;font-weight:700;letter-spacing:0.2px}
+    header img{height:44px;object-fit:contain;filter:drop-shadow(0 2px 6px rgba(0,0,0,.3))}
+    .toolbar{display:flex;gap:10px;align-items:center;margin:6px 0 18px 0}
+    .toolbar form{margin:0}
+    .btn{appearance:none;border:0;border-radius:12px;padding:10px 14px;background:#1e293b;color:#e5e7eb;cursor:pointer;box-shadow:0 1px 0 #0006, inset 0 1px 0 #ffffff0d}
+    .btn:hover{filter:brightness(1.08)}
+    .btn.primary{background:var(--accent);color:#071427}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    .card{background:var(--card);border:1px solid #111827;border-radius:16px;padding:14px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+    .group{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    label{color:#cbd5e1}
+    input[type="text"], textarea, select, input[type="number"]{width:100%;background:#0f172a;color:#e5e7eb;border:1px solid #1f2937;border-radius:12px;padding:10px}
+    textarea{min-height:90px}
+    .muted{color:var(--muted);font-size:12px}
+    .pill{display:inline-block;background:var(--pill);border:1px solid #1f2937;border-radius:999px;padding:6px 10px}
+    .pill.ok{background:#052e19;border-color:#0a3f23;color:#a7f3d0}
+    .pill.err{background:#3b0a0a;border-color:#551212;color:#fecaca}
+    .neighbors{display:grid;grid-template-columns:repeat(3, 1fr);gap:12px}
+    .neighbor{background:#0f172a;border:1px solid #1f2937;border-radius:14px;padding:12px}
+    .badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#111827;border:1px solid #1f2937;color:#93c5fd;font-size:11px}
+    .title{font-weight:700;margin-bottom:8px;font-size:15px}
+    .actions{display:flex;gap:10px;flex-wrap:wrap}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Estimador de Horas Professional Services TC- LATAM</h1>
+      <img src="/static/sovos.png" alt="Sovos" />
+    </header>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="grid" style="grid-template-columns:1fr;">
+          {% for category, message in messages %}
+            <div class="pill {{ 'ok' if category=='ok' else ('err' if category=='err' else '') }}">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    <div class="toolbar">
+      <form method="POST" action="/retrain">
+        <button class="btn" type="submit" title="Reconstruir índices sin reiniciar">🔁 Reentrenar</button>
+      </form>
+    </div>
+
+    <!-- FORM 1: ESTIMAR (solo inputs + botón Estimar) -->
+    <form id="form-estimar" method="POST" action="/" class="grid">
+      <div class="card">
+        <div class="group" style="margin-bottom:8px;">
+          <label>Tipo:&nbsp;
+            <select name="tipo">
+              <option value="desarrollo" {{ "selected" if form.tipo == "desarrollo" else "" }}>CESQ (Desarrollo)</option>
+              <option value="implementacion" {{ "selected" if form.tipo == "implementacion" else "" }}>PSTC (Implementación)</option>
+            </select>
+          </label>
+          <label>Método:&nbsp;
+            <label><input type="radio" name="metodo" value="softmax" {{ "checked" if form.metodo == "softmax" else "" }}> IA combinada</label>
+            <label><input type="radio" name="metodo" value="top1" {{ "checked" if form.metodo == "top1" else "" }}> Ticket más similar</label>
+          </label>
+          <label>Origen vecinos:&nbsp;
+            <select name="origen">
+              <option value="todos" {{ "selected" if form.origen == "todos" else "" }}>Todos</option>
+              <option value="historic" {{ "selected" if form.origen == "historic" else "" }}>Histórico</option>
+              <option value="catalog" {{ "selected" if form.origen == "catalog" else "" }}>Catálogo</option>
+              <option value="new" {{ "selected" if form.origen == "new" else "" }}>Nuevas</option>
+            </select>
+          </label>
+        </div>
+
+        <label>Texto / Requerimiento:</label>
+        <textarea name="texto" placeholder="Describe la tarea...">{{ form.texto }}</textarea>
+
+        <div class="actions" style="margin-top:10px;">
+          <button class="btn primary" type="submit" name="accion" value="estimar">Estimar</button>
+          <span class="muted">La estimación se ajusta por número de campos si el texto lo menciona (ej: “12 campos”).</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="title">Resultado</div>
+        <div>IA combinada: <span class="pill">{{ "%.2f"|format(estimate) if estimate is not none else "-" }} h</span></div>
+        {% if estimate_top1 is defined and estimate_top1 is not none %}
+          <div>Top1 similar: <span class="pill">{{ "%.2f"|format(estimate_top1) }} h</span></div>
+        {% else %}
+          <div>Top1 similar: <span class="pill">-</span></div>
+        {% endif %}
+      </div>
+    </form>
+
+    {% if examples %}
+      <div class="card" style="margin-top:14px;">
+        <div class="title">Casos similares (Top 3)</div>
+        <div class="neighbors">
+          {% for ex in examples %}
+            <div class="neighbor">
+              <div style="margin-bottom:6px;">
+                <span class="badge">sim {{ "%.3f"|format(ex.sim) }}</span>
+                <span class="badge">{{ "%.2f"|format(ex.horas) }} h</span>
+                <span class="badge">Ticket: {{ ex.ticket }}</span>
+                <span class="badge">{{ ex.source }}</span>
+              </div>
+              <div class="muted" style="white-space: pre-wrap;">{{ ex.texto }}</div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    <!-- FORM 2: GUARDAR  -->
+    {% if estimate is not none or estimate_top1 is not none %}
+      <form id="form-guardar" method="POST" action="/" class="card" style="margin-top:14px;">
+        <input type="hidden" name="accion" value="guardar" />
+        <!-- preservar estado -->
+        <input type="hidden" name="tipo" value="{{ form.tipo }}" />
+        <input type="hidden" name="origen" value="{{ form.origen }}" />
+        <input type="hidden" name="texto" value="{{ form.texto }}" />
+
+        <!-- valores calculados -->
+        <input type="hidden" name="estimacion_ia" value="{{ '%.2f'|format(estimate) if estimate is not none else '' }}" />
+        <input type="hidden" name="estimacion_top1" value="{{ '%.2f'|format(estimate_top1) if estimate_top1 is not none else '' }}" />
+
+        <div class="title">Guardar estimación</div>
+        <div class="group" style="margin-top:6px;">
+          <label>Usar como estimación final:&nbsp;
+            <select name="metodo_usado">
+              <option value="softmax" {{ "selected" if form.metodo == "softmax" else "" }}>
+                IA combinada ({{ '%.2f'|format(estimate) if estimate is not none else '-' }} h)
+              </option>
+              <option value="top1" {{ "selected" if form.metodo == "top1" else "" }} {% if estimate_top1 is none %}disabled{% endif %}>
+                Top1 similar ({{ '%.2f'|format(estimate_top1) if estimate_top1 is not none else '-' }} h)
+              </option>
+            </select>
+          </label>
+          <label>Horas reales (opcional):&nbsp;
+            <input type="number" step="0.01" min="0" name="horas_reales" placeholder="Si ya la sabes" />
+          </label>
+          <button class="btn" type="submit">💾 Guardar</button>
+        </div>
+        <div class="muted">Se guarda y se incorpora al reentrenar.</div>
+      </form>
+    {% endif %}
+  </div>
+</body>
+</html>

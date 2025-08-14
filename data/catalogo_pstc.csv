@@ -1,0 +1,686 @@
+text,hours
+Diseño (plantillas y mailing),18.0
+configuracion plantilla full (reglas visualizacion),7.0
+Oficina de partes 2.0,6.0
+Habilitacion plantillas,3.0
+Total,34.0
+Upgrade Release (QA y PRD),16.0
+Testing y Go live,10.0
+Total,26.0
+Instalacion EGW APP + BBDD (QA/PRD),16.0
+Creacion empresa egw y eServer (QA/PRD),16.0
+Configuracion impresoras (10),5.0
+"Configuraciones adicionales (jar,plantillas,reglas)",10.0
+Diseño layouts/pdf,8.0
+Apoyo pruebas,8.0
+Go Live/Hypercare,6.0
+Migracion DTE,8.0
+Total,77.0
+Migracion APP/Storage (3 servidores),30.0
+Instalacion Postgres 12.8 ( 3 servidores),12.0
+Migracion Data BBDD ( 3 servidores),30.0
+Configuraciones,10.0
+Testing/Hypercare,10.0
+Total,92.0
+Habilitar emision GUIA (52) QA y PRD,6.0
+Diseño y configuracion plantillas,4.0
+Testing/Hypercare,4.0
+Total,14.0
+Validación configuración ambiente UAT nuevo servidor correo,2.0
+Apoyo en pruebas en UAT - 2 semanas,12.0
+Validación configuración ambiente PRD nuevo servidor correo,2.0
+Apoyo entrada a PRD - 1 semana,8.0
+Testing/Hypercare,6.0
+Total,30.0
+Certificacion set exportacion + set basico,12.0
+Diseño,6.0
+Instalacion y configuracion,3.0
+Total,21.0
+Actualizacion Release egw (QA y PRD),18.0
+controller (QA y PRD),10.0
+Apoyo entrada a PRD - 1 semana,8.0
+Testing/Hypercare,8.0
+Total,44.0
+Instalacion EGW APP + BBDD (QA/PRD),16.0
+Creacion empresa egw y eServer (QA/PRD),16.0
+Configuracion impresoras (10),5.0
+"Configuraciones adicionales (jar,plantillas,reglas)",10.0
+Diseño layouts/pdf,8.0
+Apoyo pruebas,8.0
+Go Live/Hypercare,6.0
+Migracion DTE,8.0
+Total,77.0
+Configuracion nuevo canal emisor,5.0
+"Configuraciones adicionales (jar,plantillas,reglas)",5.0
+Diseño layouts/pdf,8.0
+Go Live/Hypercare,6.0
+Total,24.0
+Actualizacion 4 egw (2 QA y 2 PRD),30.0
+Actualizacion 2 Servidores Reclamacion (1 QA y 1 PRD),5.0
+Config filtro,5.0
+Go Live/Hypercare,5.0
+Total,45.0
+Actualizacion + Migracion 4 egw (2 QA y 2 PRD),40.0
+Migracion BD Win to Linux (QA y PRD),20.0
+Config filtro,5.0
+Go Live/Hypercare,10.0
+Total,75.0
+Actualizacion 4 egw (2 QA y 2 PRD),30.0
+Config empresa en eserver y filtro,9.0
+Go Live/Hypercare,8.0
+Total,47.0
+Actualizacion + Migracion 4 egw (2 QA y 2 PRD),40.0
+Migracion BD Win to Linux (QA y PRD),20.0
+Config empresa en eserver y filtro,10.0
+Go Live/Hypercare,8.0
+Total,78.0
+QA - Migracion de empresas y configuracion EGWS (BO y POS),14.0
+testing QA,7.0
+PRD - Migracion de empresas y configuraciones de 4 egws (1 BO y 3 POS) a 3 egw (1 BO y 2 POS),24.0
+Modificaciones Filtro (estimativo),15.0
+Apoyo config POS y Hypercare,15.0
+Total,75.0
+Certificacion Factra de Compra,4.0
+Configuraciones,4.0
+Diseño plantilla estándar,3.0
+Hipercare,4.0
+Total,15.0
+Actualizacion release (PRD),10.0
+Configuraciones switch to EGW POS (prd),6.0
+Instalacion POS en EGW (5 POS) (2 POS QA),8.0
+Pruebas QA,12.0
+Configuracion egw QA DEDICADO,11.0
+Hypercare,7.0
+TOTAL,54.0
+Replicacion de egw PRD a nuevo EGW,10.0
+Actualizacion release (PRD),10.0
+Configuraciones adicionales,6.0
+Testing + Hypercare,10.0
+TOTAL,36.0
+Instalacion filtro (PRD y QA),5.0
+Apoyo cutover,2.0
+Testing + Hypercare,5.0
+TOTAL,12.0
+Migracion egw POS (BD + APP),15.0
+Migracion egw BO (BD + APP),15.0
+Apoyo cutover,2.0
+Testing + Hypercare,7.0
+TOTAL,39.0
+Instalacion egw (app + BD) y Creacion empresa,10.0
+Creacion empresa Eserver,3.0
+Certificacion Boletas + set basico,11.0
+RTC + config Boletas envio SII,7.0
+Instalacion 1 Piloto PRD + Manual instalacion,5.0
+Testing + Hypercare + (apoyo rollout),14.0
+TOTAL,50.0
+Creacion empresa Eserver,4.0
+Certificacion Boletas + set basico + set exportacion,15.0
+Diseño plantillas,8.0
+Testing + Hypercare,3.0
+TOTAL,30.0
+Instalacion egw (app + BD) y Creacion empresa,10.0
+Creacion empresa Eserver + configuraciones adicionales,5.0
+Diseño Set basico + GD,7.0
+Configuracion impresoras,10.0
+"Modulo Cesion, Reclamacion + Printer",5.0
+Instalacion 2 epos (1 PRD + 1 QA),5.0
+Migracion XML,60.0
+Testing + Hypercare,20.0
+TOTAL,122.0
+Creacion empresa EGW (QA/PRD),8.0
+Configuraciones Adicionales,5.0
+Testing/Hypercare,7.0
+TOTAL,20.0
+• Habilitar módulo de RECLAMACIONES con integración mediante WebServices. QA/PRD,6.0
+• Envío de los documentos recepcionados validados por el SII (Aceptados y aceptados con reparo) a SFTP del cliente,1.0
+• Habilitar Recepción Avanzada.,1.0
+• Configurar Carta (Módulo de Reclamaciones),1.0
+Testing/hypercare,3.0
+Total,12.0
+configuracion empresa POS eserver (QA/PRD),10.0
+Diseño,5.0
+Habilitacion 1 POS QA,1.5
+Habilitacion 6 POS PRD,6.0
+Capacitacion POS,2.0
+Configuracion boleta 1 a 1,4.0
+Manual,1.0
+Testing/Hypercare,6.0
+Total,35.5
+configuracion empresa eserver (QA/PRD),8.0
+Diseño,8.0
+Configuracion boleta 1 a 1,4.0
+Testing/Hypercare,5.0
+Total,25.0
+Configuracion empresa QA y PRD (egw/eserv),10.0
+Certificacion set basico + boletas,9.0
+Configuraciones adicionales + envio boletas,6.0
+Diseño plantillas personalizadas,9.0
+Testing/hypercare,5.0
+Total,39.0
+Configuraciones ASP + agentes,3.0
+Configuraciones en FM,4.0
+Hypercare,4.0
+Total,11.0
+Configuraciones eserver,3.0
+Configuracion filtro,1.0
+Regularizacion de folios,3.0
+Testing/hypercare,5.0
+Total,12.0
+Migracion APP (QA/PRD),10.0
+Migracion DDBB (QA/PRD),12.0
+Testing/hypercare,5.0
+Total,27.0
+Migracion APP (QA/PRD),8.0
+Migracion DDBB (QA/PRD),8.0
+Testing/hypercare,5.0
+Total,21.0
+Creacion empresa Eserver + configuraciones adicionales,5.0
+Certificacion set basico + adicional,7.0
+Diseño,7.0
+Testing/hypercare,5.0
+Total,24.0
+Diseño (factura compra y Guia De Despacho),5.0
+Configuracion 1 Pos QA + 1 POS PRD,4.0
+Certificacion Factura de compra 5 ruts,18.0
+Testing/hypercare,8.0
+Total,35.0
+Migracion mixto to full,5.0
+configuracion POS eserver,3.0
+Diseño,7.0
+Manual + capacitacion config ePOS,6.0
+Instalacion Printer,2.0
+Cesion gestdoc,3.0
+Boleta Honorarios,4.0
+Libros contables,2.0
+Testing/hypercare,10.0
+Total,42.0
+Migracion mixto to full (QA /PRD),8.0
+Config generacion SFTP (filtro full y xsl),6.0
+Testing/hypercare,5.0
+Total,19.0
+Configuracion empresa Mixto POS,5.0
+Configuracion RTC/siiservices,2.0
+Certificacion boletas,4.0
+Diseño Plantillas,3.0
+Instalacion 8 Pos PRD,4.0
+Testing/hypercare,5.0
+Total,23.0
+Creacion empresa (QA /PRD),8.0
+Configuraciones adicionales,3.0
+Modulo Cesion,2.0
+Diseño,8.0
+Reclamaciones,3.0
+Testing/hypercare,6.0
+Total,30.0
+Configuraciones mixto to full asp,8.0
+Creacion/configuracion Sharedfolder/Sftp,3.0
+Testing/hypercare,5.0
+Total,16.0
+Migracion APP,10.0
+Migracion BBDD,14.0
+Testing/hypercare,7.0
+Total,31.0
+Creacion Empresa QA/PRD,6.0
+Config filtro y agentes procesamiento,2.0
+Certificacion Set basico,5.0
+Modulo Reclamaciones,2.0
+Diseño,5.0
+"Modulo Cesion, Recepcion avanzada",6.0
+Testing/hypercare,5.0
+Total,31.0
+Diseño,3.0
+"Config filtro, variables y reglas",4.0
+Testing/hypercare,1.0
+Total,8.0
+Diseño boletas BO/manual,5.0
+Certificacion Set Boletas,4.0
+Configuracion emision,4.0
+Testing/hypercare,5.0
+Total,18.0
+Creacion Empresa QA/PRD,7.0
+Config filtro y agentes,6.0
+Diseño,16.0
+envio boletas SII,4.0
+Testing/hypercare,7.0
+Total,40.0
+Creacion Empresa QA/PRD (2 egw - 1 eserver),10.0
+"Config filtro, agentes, adicionales",15.0
+Diseño,28.0
+"Modulo Reclamaciones, recepcion, cesion",6.0
+Testing/hypercare,20.0
+Total,79.0
+Instalacion egw (app + BD) y Creacion empresa,10.0
+Creacion empresa Eserver + configuraciones adicionales,5.0
+Diseño Set basico + GD,7.0
+Configuracion impresoras,10.0
+"Modulo Cesion, Reclamacion + Printer",5.0
+Migracion XML,60.0
+Testing + Hypercare,10.0
+TOTAL,107.0
+Creacion Empresa FULL ASP QA/PRD,6.0
+"Config filtro, agentes, COAPI, adicionales",7.0
+Diseño,12.0
+"Modulo Reclamaciones, recepcion, cesion",5.0
+Config 1 POS QA - 2 POS PRD,5.0
+Testing/hypercare,15.0
+Total,50.0
+Configuracion egw QA,5.0
+Apoyo config POS,5.0
+Total,10.0
+Certificacion,14.0
+Creacion empresa egw/eserver,10.0
+Diseño,12.0
+testing/hypercare,7.0
+Total,43.0
+Migracion 5 ruts (empresa y config) QA/PRD,8.0
+Config ftp sovos (CLE),4.0
+testing/hypercare,7.0
+Total,19.0
+Migracion empresa (QA/PRD),8.0
+Migracion data POS (QA/PRD),6.0
+Configuraciones adicionales ambiente APP/BDD,5.0
+testing/hypercare,7.0
+Total,26.0
+Creacion empresa Full asp (QA/PRD),6.0
+Configuracion LCE,2.0
+testing/hypercare,2.0
+Total,10.0
+Diseño plantillas,6.0
+Configuracion plantillas y reglas mailing,4.0
+testing/hypercare,2.0
+Total,12.0
+Creacion 27 empresas - EGW cloud Sovos y eserver (QA/PRD),54.0
+Diseño Boleta exenta y afecta (27 ruts),30.0
+Instalacion 2 POS PRD y 2 POS QA,4.0
+Configuracion boleta 1 a 1 + controller (QA/PRD),12.0
+Capacitacion POS + Manual epos,3.0
+Testing/hypercare,20.0
+Total,123.0
+Creacion empresa Egw/eserver (QA Y PRD),6.0
+Diseño,10.0
+Certificacion,14.0
+Configuracion impresión,3.0
+Modulos adicionales,4.0
+testing/hypercare,5.0
+Total,42.0
+Certificacion Factura de Compra (4 ruts),16.0
+Diseño,12.0
+Configuraciones,4.0
+hypercare,2.0
+Total,34.0
+Certificacion Factura de Compra (4 ruts),5.0
+Diseño,4.0
+Configuraciones,2.0
+hypercare,2.0
+Total,13.0
+Modificacion en plantillas,6.0
+Modificacion en plataforma,2.0
+hypercare,1.0
+Total,9.0
+Certificacion Factura de Compra (5 ruts),20.0
+Configuracion Plantila estandar (sin diseño),3.0
+hypercare,2.0
+Total,25.0
+Habilitacion 1 POS QA,1.0
+Habilitacion 8 POS PRD (nocturno),3.0
+hypercare,5.0
+Total,9.0
+Certificacion Set Exportacion,7.0
+Configuraciones,2.0
+Diseño,4.0
+hypercare,1.0
+Total,14.0
+Configuraciones,3.0
+Diseño,4.0
+Mailing,3.0
+hypercare,2.0
+Total,12.0
+Configuracion plataforma BO (App + BD),25.0
+Configuracion empresas BO (17 ruts ),22.0
+"Configuraciones adicionales (impresoras,filtros,reglas,etc)",10.0
+Configuracion plataforma POS (App + BD),25.0
+Configuracion empresas POS (7 ruts ),12.0
+"Modulos (Reclamacion,FM)",4.0
+Rollout (prd y test),15.0
+Diseño,30.0
+hypercare,15.0
+Total,158.0
+Modulo Reclamaciones,2.0
+Recepcion Avanzada,2.0
+"Configuraciones adicionales (carta cortesia,otros)",1.0
+Boleta Honorarios,3.0
+hypercare,2.0
+Total,10.0
+Capacitacion Migracion/Actualizacion Epos,2.0
+Migracion egw POS a Full asp (PRD/QA),8.0
+"Migracion/Actualizacion 1 Piloto, 2 POS QA",3.0
+Migracion BO (QA/PRD),10.0
+"Modulos (reclamacion, FM, Cesion)",5.0
+Testing/hypercare,12.0
+Total,40.0
+Creacion empresa Full asp (QA/PRD),6.0
+"Configuraciones adicionales (distribucion,filtro,agentes,etc)",2.0
+Certificacion,14.0
+Diseño,3.0
+Modulo Reclamacion,1.0
+testing/hypercare,5.0
+Total,31.0
+Modificacion/revision plataforma,3.0
+Asesoria Migracion,1.0
+testing/hypercare,1.0
+Total,5.0
+Migracion egw BO (PRD/QA),10.0
+Actualizacion Release,4.0
+Testing/hypercare,7.0
+Total,21.0
+Migracion egw BO (PRD/QA),10.0
+Actualizacion Release,4.0
+Testing/hypercare,7.0
+Total,21.0
+Diseño set exportacion,5.0
+Instalacion y configuracion (filtro y plantillas),4.0
+Testing/hypercare,3.0
+Total,12.0
+Migracion eGW Onpremise a eGW cloud BO (QA/PRD),8.0
+Migracion eGW Onpremise a eGW cloud POS (QA/PRD),30.0
+Testing/Hypercare,10.0
+Total,48.0
+Configuracion empresa egw y eserver (QA/PRD),15.0
+Diseño (plantillas y Mailing),24.0
+Migracion 20MM XML,50.0
+rollout 15 PDA,15.0
+Testing/Hypercare,15.0
+Total,119.0
+Configuracion egw (App + BD + Impresoras),16.0
+Configuracion 9 ruts egw BO y eserver,20.0
+Configuracion 4 ruts egw POS,10.0
+Diseño,20.0
+Migracion 28 MM XML,70.0
+Testing/Hypercare/acompañamiento,15.0
+Total,151.0
+Creacion/configuracion empresa Full ASP (QA/PRD),10.0
+Diseño,5.0
+Apoyo rollout (5 epos),5.0
+Testing/hypercare,10.0
+Total,30.0
+Instalacion APP/BBDD (CLE),20.0
+Configuracion app y data BD,20.0
+Config impresoras,12.0
+Testing/hypercare,15.0
+Total,67.0
+Migracion 2 egw QA,12.0
+Migracion 3 EGW Productivos,24.0
+Configuraciones POS (cambios de posid),5.0
+Piloto 4 POS,4.0
+Testing/hypercare,15.0
+Total,60.0
+Creacion egw App/BBDD (qa-PRD),10.0
+Configuracion empresa egw y eserver (QA/PRD),6.0
+Configuracion impresoras y reglas,5.0
+Folio management,4.0
+Diseño,6.0
+Testing/Hypercare,7.0
+Total,38.0
+Migracion egws App + BD (1 QA + 4 PRD),20.0
+Testing/Hypercare,15.0
+Total,35.0
+Creacion egw App/BBDD QA,10.0
+"configuracion filtro, templates, conectividad nube",4.0
+Testing/Hypercare,5.0
+Total,19.0
+Reconfiguracion egw clonado a QA,5.0
+Testing/Hypercare,5.0
+Total,10.0
+Creacion empresa EGW BO y POS (QA/PRD),20.0
+Creacion empresa ESERVER,6.0
+Instalacion 1 POS QA 5 POS PRD,6.0
+Reclamaciones,2.0
+Diseño,8.0
+Testing/Hypercare,15.0
+Total,57.0
+Creacion 3 Rut FULL ASP (QA/PRD),14.0
+Certificacion Set exportacion + Boletas + Set Bsico + adicional LQ,24.0
+Diseño,25.0
+Migracion 1M,5.0
+Instalacion 3 POS,3.0
+Capacitacion POS,2.0
+Testing/Hypercare,14.0
+Total,87.0
+Creacion empresa (solo recepcion) QA/PRD,5.0
+Testing/Hypercare,5.0
+Total,10.0
+Creacion basepos Multirut/Multipos,10.0
+Capacitacion instalacion componente,2.0
+Testing/Hypercare,15.0
+Total,27.0
+Migracion APP (QA/PRD),6.0
+Migracion DB PRD,6.0
+Migracion DB UAT,3.0
+Apoyo (Testing/Hypercare),10.0
+Total,25.0
+Instalacion epos QA,1.0
+Instalacion epos PRD,1.0
+Migracion DB UAT,3.0
+Apoyo (Testing/Hypercare),10.0
+Total,15.0
+Instalacion epos QA,1.0
+Instalacion epos PRD,1.0
+Configuracion egw cloud (PRD/QA),6.0
+Apoyo (Testing/Hypercare),5.0
+Total,13.0
+Migracion Egw BO QA,5.0
+Migracion Egw POS QA,8.0
+Migracion Egw BO PRD,5.0
+Migracion Egw 1 POS PRD,8.0
+Apoyo (Testing/Hypercare),7.0
+Total,33.0
+Migracion Egw BO QA,5.0
+Migracion Egw POS QA,8.0
+Migracion Egw BO PRD,5.0
+Migracion Egw 2 POS PRD,18.0
+Apoyo (Testing/Hypercare),10.0
+Total,46.0
+Obtener XML acepta,100.0
+Inyeccion XML PPL,50.0
+Total,150.0
+Actualizacion 3 egw,18.0
+Testing/hypercare,5.0
+Total,23.0
+Creacion plantillas,5.0
+Instalacion plantillas,2.0
+Testing/hypercare,1.0
+Total,8.0
+Creacion empresa eserver (QA/PRD),10.0
+"Configuraciones facturacion manual, envio boleta",3.0
+Creacion/Instalacion plantillas,10.0
+Instalacion plantillas,1.0
+Testing/hypercare,5.0
+Total,29.0
+Creacion 2 Ruts eserver (QA/PRD),12.0
+Plantillas estándar con logo,9.0
+Modulo Cesion,4.0
+Modulo Foliomanagment,3.0
+Testing/hypercare,6.0
+Total,34.0
+Migracion mixto a full asp (13 ruts) QA y PRD,8.0
+Configuracion filtro full,2.0
+Configuracion SFTP,2.0
+Cambios layout (13 ruts),18.0
+Testing/hypercare,10.0
+Total,40.0
+Actualizacion filtro (qa/prd),2.0
+Cambios layout boletas,5.0
+Testing/hypercare,5.0
+Total,12.0
+Agregar logo a layouts,2.0
+Cambio texto,4.0
+Testing/hypercare,1.0
+Total,7.0
+Modificacion layout boleta,3.0
+Agregar campos boletas,4.0
+Testing/hypercare,2.0
+Total,9.0
+Creacion 43 ruts (QA y PRD),25.0
+Configuracion libros contables,15.0
+Testing/hypercare,5.0
+Total,45.0
+Instalacion app QA,10.0
+Migracion PRD,15.0
+Testing/hypercare,10.0
+Total,35.0
+Creacion plantilla manual 52 + cambios,3.0
+Cambios boleta afecta,3.0
+Testing/hypercare,2.0
+Total,8.0
+config excluir xml,2.0
+Cambios Mailing,2.0
+Testing/hypercare,2.0
+Total,6.0
+Migracion mixto a egw cloud sovos QA (app/bd),8.0
+Migracion mixto a egw cloud sovos PRD (app/bd),8.0
+Configuraciones de empresa,4.0
+Testing/hypercare,14.0
+Total,34.0
+Cracion plantilla 33 y 61,6.0
+Revision/Configuracion epos,2.0
+Manual/capacitacion modificacion epos,2.0
+Instalacion 1 epos QA,1.0
+Testing/hypercare,14.0
+Total,25.0
+Creacion 4 empresas (QA/PRD),15.0
+Configuracion filtro de generacion,2.0
+Diseño pdf,24.0
+Migracion 1.2 MM,5.0
+"Modulos (FM,Recl)",4.0
+Instalacion 3 POS,3.0
+Capacitacion/induccion/manual instalacion POS,3.0
+Testing/hypercare,15.0
+Total,71.0
+Migracion APP (3 egw),10.0
+Migracion data y configuraciones,15.0
+testing,10.0
+hypercare,10.0
+Total,45.0
+"Instalacion APP (3 egw - 2 Pos, 1 BO)",15.0
+"Instalacion BD (3 egw - 2 Pos, 1 BO)",15.0
+Migracion data y configuraciones,20.0
+testing,14.0
+hypercare,14.0
+Total,78.0
+Extraccion y instalacion eserver/egw,2.0
+Modificacion Boleta Afecta,2.0
+hypercare,1.0
+Total,5.0
+Migracion configuraciones 2 Ruts QA,5.0
+Migracion configuraciones 2 Ruts PRD,5.0
+Testing/hypercare,5.0
+Total,15.0
+Obtenecion/instalacion plantillas,2.0
+Modificacion al logo,10.0
+hypercare,1.0
+Total,13.0
+Creacion plantillas estándar con logo (4 ruts),6.0
+Instalacion/configuracion componente para WSDL Json,3.0
+Configuracion regla distribucion,2.0
+Testing/hypercare,5.0
+Total,16.0
+Instalacion APP - 2 egw BO (QA y contingencia ),10.0
+Instalacion BD - 2 egw (QA y contingencia),10.0
+Limpieza QA y configuraciones PRD y contingencia,8.0
+testing/hypercare,15.0
+Total,43.0
+Creacion plantillas jasper,5.0
+extraccion/Instalacion (qa/prd),2.0
+configuracion reglas,2.0
+testing/hypercare,2.0
+Total,11.0
+Instalacion y configuracion Jar (QA/PRD),3.0
+testing/hypercare,2.0
+Total,5.0
+Configuracion 2 ruts FULL ASP (QA/PRD),8.0
+Configuracion y rut EGW POS (QA/PRD),6.0
+Instalacion 3 POS,3.0
+Manual/capacitacion epos,3.0
+Diseño ( 10 plantillas por Rut) + 1 rut pos,20.0
+Folio Management,2.0
+Modulo Reclamacion,2.0
+Migracion 2.3 MM dte,8.0
+Modulo Cesion,2.0
+testing/hypercare,2.0
+Total,56.0
+Configuracion 2 ruts EGW + Eserver (QA/PRD),16.0
+Creacion plantillas a partir de otro rut,14.0
+configuraciones adicionales,4.0
+testing/hypercare,7.0
+Total,41.0
+Configuracion fecha de corte,3.0
+Obtencion/instalacion plantillas,1.0
+Total,4.0
+Instalacion APP - nuevo Release (QA/PRD),8.0
+Instalacion PostgreSQL (QA/PRD),10.0
+Migracion data BBDD y Storage (QA/PRD),10.0
+HH desarrollo,5.0
+testing,7.0
+hypercare,7.0
+Total,47.0
+Configuraciones UAT,1.0
+pruebas UAT,1.0
+Configuracion PRD,1.0
+prueba y soporte,2.0
+Total,5.0
+Configuracion tags boleta facturador manual (UAT/PRD),1.0
+Cambios en plantillas de boleta,4.0
+instalacion plantillas,1.0
+testing/hypercare,2.0
+Total,8.0
+Cambios en plantillas,5.0
+Certificacion Factura de compra,5.0
+Creacion plantilla FC,2.0
+instalacion plantillas,1.0
+testing/hypercare,2.0
+Total,15.0
+Creacion plantillas Exportacion,6.0
+Certificacion Set de exportacion,7.0
+Configuracion filtro,2.0
+instalacion plantillas,1.0
+testing/hypercare,2.0
+Total,18.0
+configuracion e instalacion jar (QA/PRD),3.0
+testing/hypercare,2.0
+Total,5.0
+Instalacion APP + BBBD (QA/PRD),20.0
+Migracion empresas,30.0
+configuraciones,10.0
+testing/hypercare,15.0
+Total,75.0
+Creacion 1 RUT BO QA Y PRD (EGW/ESERVER),8.0
+Configuracion filtro emision,5.0
+relgas impresión,6.0
+Configuracion 1 rut POS Fullasp (QA Y PRD),6.0
+Certificacion Factura de Compra,5.0
+Diseño plantillas pdf,7.0
+Foliomagement,4.0
+Instalacion 1 pos QA y 5 PRD,5.0
+testing/hypercare,15.0
+Total,61.0
+Creacion de nuevo instalador Base,3.0
+Manual y capacitacion actualizacion Java,2.0
+Instalacion 2 pos (1QA y 1 PRD),2.0
+Testing/hypercare,10.0
+Total,17.0
+Migracion 14 Ruts QA,14.0
+Migracion 14 ruts + 112 franquicias PRD,35.0
+Actualizacion epos https + openjdk,6.0
+Testing/hypercare,30.0
+Total,85.0
+Creacion 4 Ruts (QA/PRD),12.0
+Certificacion set basico + GD,7.0
+Modulo Reclamacion,2.0
+Modulo LCE,1.0
+Modulo Cesion,1.0
+Testing/hypercare,10.0
+Total,33.0
+Activcion SSO PRD,1.0
+Activcion SSO UAT,1.0
+Testing/hypercare,3.0
+Total,5.0
