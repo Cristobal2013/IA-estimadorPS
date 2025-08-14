@@ -2,11 +2,20 @@ import os
 from pathlib import Path
 import glob
 import re
+import pickle
+
 import pandas as pd
 import numpy as np
 import faiss
-import pickle
 from sentence_transformers import SentenceTransformer
+
+# Limitar hilos (RAM/CPU) en entornos chicos
+import torch
+torch.set_num_threads(1)
+try:
+    faiss.omp_set_num_threads(1)
+except Exception:
+    pass
 
 # =========================
 # Rutas y caché de modelos
@@ -19,11 +28,18 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 os.environ["HF_HOME"] = str(CACHE_DIR)
 os.environ["TRANSFORMERS_CACHE"] = str(CACHE_DIR)
 os.environ["SENTENCE_TRANSFORMERS_HOME"] = str(CACHE_DIR)
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 MODEL_NAME = os.environ.get("EMB_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+EMB_BATCH = int(os.environ.get("EMB_BATCH", "32"))
 
+# Modelo singleton para no duplicar memoria
+_MODEL = None
 def _load_model():
-    return SentenceTransformer(MODEL_NAME, cache_folder=str(CACHE_DIR))
+    global _MODEL
+    if _MODEL is None:
+        _MODEL = SentenceTransformer(MODEL_NAME, cache_folder=str(CACHE_DIR))
+    return _MODEL
 
 # =========================
 # Utilidades de datos
@@ -32,7 +48,6 @@ def _read_csv(path: Path) -> pd.DataFrame:
     try:
         return pd.read_csv(path)
     except Exception:
-        # intenta con ; y con latin-1
         try:
             return pd.read_csv(path, sep=";", encoding="latin-1")
         except Exception:
@@ -71,7 +86,7 @@ def _parse_hours(val) -> float | None:
     m = re.match(r"^\s*(\d+(?:[\.,]\d+)?)\s*(h|hs|hora|horas)\s*$", s)
     if m:
         return float(m.group(1).replace(",", "."))
-    # 4) número simple (2, 2.5, 2,5)
+    # 4) número simple
     m = re.match(r"^\s*\d+(?:[\.,]\d+)?\s*$", s)
     if m:
         return float(s.replace(",", "."))
@@ -84,33 +99,22 @@ def _pick_first_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
     return None
 
 def _load_catalog(tipo: str) -> pd.DataFrame:
-    # Mapear por tipo a catálogo
     cat_name = "catalogo_cesq.csv" if tipo == "desarrollo" else "catalogo_pstc.csv"
     cat_path = DATA_DIR / cat_name
     if not cat_path.exists():
         return pd.DataFrame(columns=["text", "hours", "source"])
 
     df = _standardize_cols(_read_csv(cat_path))
-    # Intentar localizar columnas de texto y horas
-    text_col = _pick_first_col(df, TEXT_COL_CANDIDATES)
-    hour_col = _pick_first_col(df, HOUR_COL_CANDIDATES)
-
-    # Si ya vienen como text/hours, perfecto
-    if text_col is None and "text" in df.columns:
-        text_col = "text"
-    if hour_col is None and "hours" in df.columns:
-        hour_col = "hours"
-
+    text_col = _pick_first_col(df, TEXT_COL_CANDIDATES) or ("text" if "text" in df.columns else None)
+    hour_col = _pick_first_col(df, HOUR_COL_CANDIDATES) or ("hours" if "hours" in df.columns else None)
     if text_col is None or hour_col is None:
-        # Catálogo inválido
         return pd.DataFrame(columns=["text", "hours", "source"])
 
     df["text"] = df[text_col].astype(str).fillna("").str.strip()
     df["hours"] = df[hour_col].apply(_parse_hours)
-    df = df[["text", "hours"]].dropna(subset=["text"])
-    df["source"] = cat_name
-    df = df.dropna(subset=["hours"])
+    df = df[["text", "hours"]].dropna(subset=["text", "hours"])
     df = df[df["hours"] > 0]
+    df["source"] = cat_name
     return df[["text", "hours", "source"]]
 
 def _load_historico(tipo: str) -> pd.DataFrame:
@@ -143,8 +147,8 @@ def _load_historico(tipo: str) -> pd.DataFrame:
 
 def load_labeled_dataframe(tipo: str) -> pd.DataFrame:
     """
-    1) Si existe labeled_{tipo}.csv, úsalo.
-    2) Si no, construye dataset desde catálogo + históricos en DATA_DIR.
+    1) Usa labeled_{tipo}.csv si existe y es válido.
+    2) Si no, combina catálogo + históricos desde DATA_DIR.
     """
     path = DATA_DIR / f"labeled_{tipo}.csv"
     if path.exists():
@@ -157,17 +161,16 @@ def load_labeled_dataframe(tipo: str) -> pd.DataFrame:
                 df["source"] = path.name
                 return df[["text", "hours", "source"]]
 
-    # Fallback: catálogo + históricos
     cat = _load_catalog(tipo)
     hist = _load_historico(tipo)
-    df = pd.concat([cat, hist], ignore_index=True) if not cat.empty or not hist.empty \
-         else pd.DataFrame(columns=["text", "hours", "source"])
-
-    if df.empty:
-        raise FileNotFoundError(f"No hay datos con horas para {tipo}. "
-                                f"Verifica {('catalogo_cesq.csv' if tipo=='desarrollo' else 'catalogo_pstc.csv')} "
-                                f"o sube labeled_{tipo}.csv con columnas 'text' y 'hours'.")
-    return df
+    if not cat.empty or not hist.empty:
+        df = pd.concat([cat, hist], ignore_index=True)
+        return df
+    raise FileNotFoundError(
+        f"No hay datos con horas para {tipo}. "
+        f"Verifica {'catalogo_cesq.csv' if tipo=='desarrollo' else 'catalogo_pstc.csv'} "
+        f"o sube labeled_{tipo}.csv con columnas 'text' y 'hours'."
+    )
 
 # =========================
 # Estimador FAISS
@@ -197,7 +200,13 @@ class EmbeddingsFaissEstimator:
     def train(self, df: pd.DataFrame):
         self.model = _load_model()
         texts = df["text"].astype(str).tolist()
-        embeddings = self.model.encode(texts, convert_to_numpy=True, show_progress_bar=True)
+        # Embeddings con batch y sin barra de progreso (menos RAM)
+        embeddings = self.model.encode(
+            texts,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+            batch_size=EMB_BATCH,
+        )
         dim = embeddings.shape[1]
         faiss.normalize_L2(embeddings)
         self.index = faiss.IndexFlatIP(dim)
@@ -208,7 +217,7 @@ class EmbeddingsFaissEstimator:
     def predict(self, texto: str, k: int = 5):
         if self.model is None or self.index is None:
             raise RuntimeError("Debes cargar el índice primero")
-        emb = self.model.encode([texto], convert_to_numpy=True)
+        emb = self.model.encode([texto], convert_to_numpy=True, show_progress_bar=False, batch_size=EMB_BATCH)
         faiss.normalize_L2(emb)
         D, I = self.index.search(emb, k)
         results = []
