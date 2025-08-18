@@ -1,227 +1,262 @@
-
-import os, csv, io
-from typing import List, Dict, Tuple, Optional
 from flask import Flask, render_template, request, redirect, url_for, flash
+from pathlib import Path
+import pandas as pd
+import datetime as dt
+import re, math, os
 
-# ==================== Config ====================
-ENABLE_EMBEDDINGS = os.environ.get("ENABLE_EMBEDDINGS", "0") in {"1","true","True","yes","YES"}
-MODEL_NAME = os.environ.get("MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2")
-DATA_CSV = os.environ.get("DATA_CSV", "data/historicos.csv")
-EMB_PATH = os.environ.get("EMB_PATH", "data/embeddings.npz")
-TOP_K = int(os.environ.get("TOP_K", "5"))
+from estimator import (
+    EmbeddingsFaissEstimator,
+    train_index_per_type,
+    load_labeled_dataframe,
+)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "dev-secret")
+app.secret_key = os.environ.get("FLASK_SECRET", "dev-secret")
 
-# ==================== Utils ====================
-def _np():
-    try:
-        import numpy as np  # lazy import
-        return np
-    except Exception:
-        return None
 
-@app.template_filter("hfmt")
-def hfmt(value):
-    if value is None:
-        return "-"
-    try:
-        return f"{float(value):.2f}"
-    except Exception:
-        return "-"
+# -------------------------
+# Helpers
+# -------------------------
+def _extract_field_count(text: str) -> int:
+    if not text:
+        return 0
+    m = re.search(r"(\d+)\s*(campos?|columnas?|fields?)", text.lower())
+    return int(m.group(1)) if m else 0
 
-def round_quarter(x: float) -> float:
-    return round(x * 4) / 4.0
 
-# ==================== Catálogo heurístico ====================
-KEYWORD_WEIGHTS = {
-    "api": 2.0, "selenium": 2.0, "excel": 1.5, "pdf": 1.5, "grafico": 1.5, "gráfico": 1.5,
-    "dashboard": 2.0, "integracion": 2.0, "integración": 2.0, "reporte": 1.5, "sii": 2.5,
-    "netlify": 1.0, "flask": 1.0, "faiss": 2.0, "embeddings": 2.0, "sendgrid": 1.0,
-    "correo": 1.0, "email": 1.0, "pfx": 2.0, "certificado": 2.0, "firefox": 1.0
-}
-def catalog_estimate(text: str) -> float:
-    t = (text or "").lower()
-    base = 2.0 if t else 0.0
-    for k, w in KEYWORD_WEIGHTS.items():
-        if k in t:
-            base += w
-    words = len(t.split())
-    base += min(words / 200.0, 3.0)
-    return max(0.5, round_quarter(base))
+def _neighbor_based_cost_per_field(neighbors, labeled_df) -> float:
+    numer, denom = 0.0, 0.0
+    for idx, sim, h in neighbors:
+        if idx is None or idx < 0 or idx >= len(labeled_df):
+            continue
+        t = labeled_df.loc[idx, "text"]
+        n = _extract_field_count(t)
+        if n > 0:
+            numer += float(h)
+            denom += float(n)
+    if denom > 0:
+        return numer / denom
+    return 0.35  # fallback: 0.35 h/campo
 
-# ==================== KB / Embeddings ====================
-_model = None
-_kb_records: List[Dict] = []
-_kb_matrix = None  # numpy.ndarray | None
 
-def _try_import_model():
-    global _model
-    if not ENABLE_EMBEDDINGS:
-        return False
-    if _model is not None:
-        return True
-    try:
-        from sentence_transformers import SentenceTransformer
-        _model = SentenceTransformer(MODEL_NAME)
-        return True
-    except Exception as e:
-        app.logger.warning("No se pudo cargar el modelo de embeddings: %s", e)
-        return False
+def _estimate_with_softmax(neighbors, temperature=0.20):
+    """Softmax(sim/temperature): más frío => más peso al top1."""
+    if not neighbors:
+        return 0.0, []
+    sims = [max(0.0, s) for _, s, _ in neighbors]
+    exps = [math.exp(s/temperature) for s in sims]
+    Z = sum(exps) or 1.0
+    weights = [e/Z for e in exps]
+    hours = [h for _, _, h in neighbors]
+    estimate = sum(w*h for w, h in zip(weights, hours))
+    return estimate, weights
 
-def _load_kb_from_disk() -> bool:
-    np = _np()
-    if np is None or not os.path.exists(EMB_PATH):
-        return False
-    try:
-        npz = np.load(EMB_PATH, allow_pickle=True)
-        globals()['_kb_matrix'] = npz["X"]
-        globals()['_kb_records'] = list(npz["records"])
-        return True
-    except Exception as e:
-        app.logger.warning("No se pudo leer %s: %s", EMB_PATH, e)
-        return False
 
-def _save_kb_to_disk():
-    np = _np()
-    if np is None:
-        return
-    np.savez_compressed(EMB_PATH, X=globals()['_kb_matrix'], records=np.array(globals()['_kb_records'], dtype=object))
+def _filter_neighbors_by_source(neighbors, labeled_df, origen):
+    """Filtra vecinos por source: 'historic' | 'catalog' | 'new' | 'todos'."""
+    if origen in (None, "", "todos"):
+        return neighbors
+    keep = []
+    for idx, sim, h in neighbors:
+        if idx is None or idx < 0 or idx >= len(labeled_df):
+            continue
+        src = labeled_df.loc[idx].get("source", "unknown")
+        if src == origen:
+            keep.append((idx, sim, h))
+    return keep
 
-def _read_hist_csv(path: str) -> List[Dict]:
-    records = []
-    if not os.path.exists(path):
-        return records
-    with open(path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for i, row in enumerate(reader, 1):
-            rec = {
-                "id": row.get("id") or row.get("ticket_id") or str(i),
-                "tipo": row.get("tipo") or row.get("category") or "",
-                "descripcion": (row.get("descripcion") or row.get("descripcion_limpia") or row.get("texto") or "").strip(),
-                "horas": None
-            }
-            try:
-                rec["horas"] = float(row.get("horas")) if row.get("horas") not in (None, "", "-") else None
-            except Exception:
-                rec["horas"] = None
-            if rec["descripcion"]:
-                records.append(rec)
-    return records
 
-def retrain_from_csv() -> Tuple[int, str]:
-    globals()['_kb_records'] = _read_hist_csv(DATA_CSV)
-    if not globals()['_kb_records']:
-        return 0, "No hay registros en el CSV"
-    if not _try_import_model():
-        return len(globals()['_kb_records']), "Modelo no disponible (instala sentence-transformers y numpy, o habilita ENABLE_EMBEDDINGS=1)"
-    np = _np()
-    if np is None:
-        return len(globals()['_kb_records']), "numpy no disponible (añade 'numpy' en requirements)"
-    try:
-        X = _model.encode([r["descripcion"] for r in globals()['_kb_records']], normalize_embeddings=True)
-        globals()['_kb_matrix'] = np.asarray(X, dtype="float32")
-        _save_kb_to_disk()
-        return len(globals()['_kb_records']), "Embeddings recalculados"
-    except Exception as e:
-        return len(globals()['_kb_records']), f"Fallo calculando embeddings: {e}"
+# Entrenar índices al iniciar (histórico + catálogos + nuevas)
+try:
+    counts = train_index_per_type()
+    print(
+        f"Índices entrenados. "
+        f"Desarrollo={counts.get('desarrollo',0)}, "
+        f"Implementación={counts.get('implementacion',0)}"
+    )
+except Exception as e:
+    print("WARN: No se pudo entrenar índices al iniciar:", e)
 
-def load_or_init_kb():
-    if _load_kb_from_disk():
-        return
-    if ENABLE_EMBEDDINGS and os.path.exists(DATA_CSV):
-        retrain_from_csv()
 
-def semantic_estimate(text: str):
-    np = _np()
-    if not text or not _try_import_model() or np is None:
-        return None, []
-    if globals()['_kb_matrix'] is None or not len(globals()['_kb_records']):
-        return None, []
-    q = _model.encode([text], normalize_embeddings=True)[0]
-    q = np.asarray(q, dtype="float32")
-    sims = globals()['_kb_matrix'] @ q
-    idx = np.argsort(-sims)[:TOP_K]
-    hits = []
-    weights = []
-    horas_vals = []
-    for i in idx:
-        rec = dict(globals()['_kb_records'][int(i)])
-        rec["sim"] = float(sims[int(i)])
-        hits.append(rec)
-        if rec.get("horas") is not None:
-            weights.append(max(0.0, float(sims[int(i)])))
-            horas_vals.append(float(rec["horas"]))
-    if weights and sum(weights) > 0:
-        est = sum(h * w for h, w in zip(horas_vals, weights)) / sum(weights)
-    elif horas_vals:
-        est = float(sum(horas_vals) / len(horas_vals))
-    else:
-        est = None
-    return (round_quarter(est) if isinstance(est, (int, float)) else None), hits
-
-# ==================== Routes ====================
+# -------------------------
+# Rutas
+# -------------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
-    status = {
-        "ok": True,
-        "emb": bool(globals()['_kb_matrix'] is not None),
-        "kb_count": len(globals()['_kb_records']),
-        "emb_enabled": ENABLE_EMBEDDINGS,
-    }
-
-    default_form = {"tipo": "CESQ", "descripcion": ""}
-
     estimate = None
-    estimate_catalog = None
-    estimate_semantic = None
-    kb_hits: List[Dict] = []
+    estimate_top1 = None
+    neighbors = []
+    debug_info = {}
+    form = {"tipo": "desarrollo", "texto": "", "metodo": "softmax", "origen": "todos"}
 
-    if request.method == "POST" and request.form.get("action") == "estimate":
-        tipo = request.form.get("tipo") or "CESQ"
-        descripcion = (request.form.get("descripcion") or "").strip()
-        if not descripcion:
-            flash("Por favor ingresa una descripción.", "warning")
-        else:
-            estimate_catalog = catalog_estimate(descripcion)
-            estimate_semantic, kb_hits = semantic_estimate(descripcion)
-            if estimate_semantic is None:
-                estimate = estimate_catalog
+    if request.method == "POST":
+        accion = request.form.get("accion", "estimar")
+        form["tipo"] = request.form.get("tipo", "desarrollo")
+        form["texto"] = request.form.get("texto", "")
+        form["metodo"] = request.form.get("metodo", "softmax")
+        form["origen"] = request.form.get("origen", "todos")
+
+        tag = "desarrollo" if form["tipo"] == "desarrollo" else "implementacion"
+
+        # Cargar índice (si falla, reentrena una vez)
+        est = EmbeddingsFaissEstimator(tag)
+        try:
+            est.load()
+        except Exception:
+            try:
+                train_index_per_type()
+                est.load()
+            except Exception as e2:
+                return (f"No se pudo cargar/entrenar el índice [{tag}]: {e2}", 500)
+
+        if accion == "guardar":
+            # Persistir confirmación del usuario
+            metodo_usado = request.form.get("metodo_usado", form["metodo"])
+            estimacion_ia = request.form.get("estimacion_ia")
+            estimacion_top1 = request.form.get("estimacion_top1")
+            estimacion_final = request.form.get("estimacion_final")
+            horas_reales = request.form.get("horas_reales")
+
+            # Si no llegó estimacion_final, elegir según método
+            if not estimacion_final:
+                if metodo_usado == "top1" and estimacion_top1:
+                    estimacion_final = estimacion_top1
+                elif metodo_usado == "softmax" and estimacion_ia:
+                    estimacion_final = estimacion_ia
+
+            def to_float(x):
+                try:
+                    return float(x) if x not in (None, "", "-") else None
+                except Exception:
+                    return None
+
+            out = Path("data/estimaciones_nuevas.csv")
+            out.parent.mkdir(parents=True, exist_ok=True)
+            row = {
+                "fecha": dt.datetime.now().isoformat(timespec="seconds"),
+                "tipo": form["tipo"],                # CESQ (desarrollo) o PSTC (implementación)
+                "texto": form["texto"],
+                "metodo_usado": metodo_usado,        # softmax o top1
+                "estimacion_ia": to_float(estimacion_ia),
+                "estimacion_top1": to_float(estimacion_top1),
+                "estimacion_final": to_float(estimacion_final),
+                "horas_reales": to_float(horas_reales),
+            }
+            df_out = pd.DataFrame([row])
+            header = not out.exists()
+            df_out.to_csv(out, mode="a", header=header, index=False, encoding="utf-8")
+
+            flash("Estimación guardada. El modelo aprenderá con futuros reentrenos.", "ok")
+            return redirect(url_for("index"))
+
+        # === Estimar ===
+        # Vecinos (diagnóstico pre y post filtro)
+        est_soft_unused, neighbors_all = est.predict(form["texto"], k=30)
+        labeled = load_labeled_dataframe(tag).reset_index(drop=True)
+
+        # Conteo por origen (antes de filtrar)
+        counts_all = {"historic":0, "catalog":0, "new":0, "unknown":0}
+        rows_all = []
+        for (i,s,h) in neighbors_all:
+            if i is None or i < 0 or i >= len(labeled):
+                continue
+            src_i = labeled.loc[i].get("source","unknown")
+            counts_all[src_i] = counts_all.get(src_i,0)+1
+            rows_all.append({
+                "idx": int(i),
+                "sim": float(round(s,4)),
+                "hours": float(round(h,4)),
+                "ticket": str(labeled.loc[i].get("ticket","?")),
+                "source": src_i,
+                "text": str(labeled.loc[i].get("text",""))[:180]
+            })
+
+        # Aplicar filtro de origen a los vecinos usados
+        neighbors = _filter_neighbors_by_source(neighbors_all, labeled, form.get("origen", "todos"))
+        debug_info = {
+            "tipo": tag,
+            "texto": form.get("texto",""),
+            "origen": form.get("origen","todos"),
+            "k_all": len(neighbors_all),
+            "k_used": len(neighbors),
+            "counts_all": counts_all,
+            "neighbors_all": rows_all[:12],
+        }
+
+        if neighbors:
+            # Top1: si origen=todos, preferir histórico en casi-empate
+            if form.get("metodo") == "top1" and form.get("origen", "todos") == "todos":
+                best_idx, best_sim, best_h = max(neighbors, key=lambda t: t[1])
+                hist_candidates = [(i,s,h) for (i,s,h) in neighbors if labeled.loc[i].get("source","?")=="historic"]
+                if hist_candidates:
+                    h_idx, h_sim, h_h = max(hist_candidates, key=lambda t: t[1])
+                    estimate_top1 = h_h if (best_sim - h_sim) <= 0.02 else best_h
+                else:
+                    estimate_top1 = best_h
             else:
-                estimate = round_quarter((estimate_catalog + estimate_semantic) / 2.0)
-        default_form.update({"tipo": tipo, "descripcion": descripcion})
+                estimate_top1 = sorted(neighbors, key=lambda t: t[1], reverse=True)[0][2]
+        else:
+            estimate_top1 = None
+
+        # Estrategia elegible por el usuario
+        if form["metodo"] == "top1" and neighbors:
+            estimate = estimate_top1
+        else:
+            est_soft, _ = _estimate_with_softmax(neighbors, temperature=0.20)
+            estimate = est_soft
+
+        # Ajuste por cantidad de campos
+        N = _extract_field_count(form["texto"])
+        if N > 0:
+            cpf = _neighbor_based_cost_per_field(neighbors, labeled)
+            alpha = 0.3  # 30% método elegido + 70% costo_por_campo
+            base = alpha * float(estimate or 0.0) + (1.0 - alpha) * (cpf * N)
+            min_per_field = 0.25
+            estimate = max(base, N * min_per_field)
+
+    # Render vecinos (solo top 3)
+    examples = []
+    if neighbors:
+        tag = "desarrollo" if form["tipo"] == "desarrollo" else "implementacion"
+        labeled = load_labeled_dataframe(tag).reset_index(drop=True)
+        neighbors = sorted(neighbors, key=lambda t: t[1], reverse=True)[:3]
+        for idx, sim, h in neighbors:
+            if idx is None or idx < 0 or idx >= len(labeled):
+                continue
+            row = labeled.loc[idx]
+            txt = row["text"]
+            tkt = row["ticket"]
+            src = row.get("source", "?")
+            examples.append({
+                "ticket": tkt,
+                "texto": (txt[:500] + ("..." if len(txt) > 500 else "")),
+                "horas": h,
+                "sim": round(sim, 3),
+                "source": src,
+            })
 
     return render_template(
         "index.html",
-        status=status,
-        form=default_form,
+        form=form,
         estimate=estimate,
-        estimate_catalog=estimate_catalog,
-        estimate_semantic=estimate_semantic,
-        kb_hits=kb_hits,
-        top_k=TOP_K,
+        estimate_top1=estimate_top1,
+        neighbors=neighbors,
+        examples=examples,
+        debug_info=debug_info
     )
 
+
 @app.route("/retrain", methods=["POST"])
-def retrain_route():
-    cnt, msg = retrain_from_csv()
-    flash(f"Reentrenado: {cnt} registros. {msg}", "info")
+def retrain():
+    try:
+        counts = train_index_per_type()
+        msg = (f"Reentrenado. Desarrollo={counts.get('desarrollo',0)}, "
+               f"Implementación={counts.get('implementacion',0)}")
+        flash(msg, "ok")
+    except Exception as e:
+        flash(f"Error al reentrenar: {e}", "err")
     return redirect(url_for("index"))
 
-@app.route("/upload", methods=["POST"])
-def upload_route():
-    file = request.files.get("file")
-    if not file or file.filename == "":
-        flash("Sube un CSV con columnas: id,tipo,descripcion,horas", "warning")
-        return redirect(url_for("index"))
-    try:
-        os.makedirs(os.path.dirname(DATA_CSV), exist_ok=True)
-        file.save(DATA_CSV)
-        flash("Archivo histórico cargado. Ahora ejecuta Reentrenar histórico.", "info")
-    except Exception as e:
-        flash(f"No se pudo guardar el CSV: {e}", "warning")
-    return redirect(url_for("index"))
 
 if __name__ == "__main__":
-    load_or_init_kb()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+    app.run(host="0.0.0.0", port=7860, debug=True)
