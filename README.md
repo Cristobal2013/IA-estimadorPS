@@ -1,22 +1,20 @@
 
-# IA Estimador (mínimo viable para Render)
+# IA Estimador (Catálogo + Históricos + Reentrenar + Upload)
 
-Este paquete soluciona el error `jinja2.exceptions.UndefinedError: 'estimate' is undefined`
-pasando variables por defecto al template y blindando el render con un filtro `hfmt`.
+## Variables de entorno
+- ENABLE_EMBEDDINGS=1
+- MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2 (opcional)
+- DATA_CSV=data/historicos.csv
+- EMB_PATH=data/embeddings.npz
+- TOP_K=5
 
-## Deploy en Render
-1. Crear servicio Web (Python).
-2. Build Command: `pip install -r requirements.txt`
-3. Start Command: `gunicorn -k gthread -w 2 -b 0.0.0.0:$PORT app:app`
-4. (Opcional) `SECRET_KEY` en variables de entorno.
+## Pasos en Render
+1) Build Command: `pip install -r requirements.txt`
+2) Start Command: `gunicorn -k gthread -w 1 --threads 1 -t 300 -b 0.0.0.0:$PORT app:app`
+3) Env Vars: `ENABLE_EMBEDDINGS=1`
+4) Sube tu CSV de históricos desde la UI (botón "Subir CSV") y luego pulsa "Reentrenar histórico".
 
-## Estructura
-- app.py
-- templates/index.html
-- static/styles.css
-- requirements.txt
-- Procfile
-
-## Extender
-- Implementa tu lógica real de estimación en `combined_estimate()`.
-- Si agregas estimador por similitud, pasa también `estimate_semantic` y ajusta el cálculo final.
+## Formato CSV
+id,tipo,descripcion,horas
+TCK-001,CESQ,Crear endpoint...,8
+...
