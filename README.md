@@ -1,35 +1,22 @@
 
-# Estimador de Horas (RHEL · Embeddings + FAISS · Dual índices)
+# IA Estimador (mínimo viable para Render)
 
-## Requisitos
-- Python 3.8 en RHEL 7.6
-- Salida a internet (para descargar el modelo la primera vez) **o** copiar manualmente la caché de HuggingFace.
+Este paquete soluciona el error `jinja2.exceptions.UndefinedError: 'estimate' is undefined`
+pasando variables por defecto al template y blindando el render con un filtro `hfmt`.
 
-## Instalación
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip wheel setuptools
-pip install -r requirements.txt
-```
+## Deploy en Render
+1. Crear servicio Web (Python).
+2. Build Command: `pip install -r requirements.txt`
+3. Start Command: `gunicorn -k gthread -w 2 -b 0.0.0.0:$PORT app:app`
+4. (Opcional) `SECRET_KEY` en variables de entorno.
 
-> Si tu red requiere proxy, exporta HTTP(S)_PROXY antes de `pip install`.
-> Los pesos del modelo (all-MiniLM-L6-v2) se guardarán en `data/models/hf_cache`.
+## Estructura
+- app.py
+- templates/index.html
+- static/styles.css
+- requirements.txt
+- Procfile
 
-## Ejecutar
-```bash
-python app.py
-```
-- Entrena dos índices (CESQ=desarrollo, PSTC=implementación) con embeddings
-- Corre en http://0.0.0.0:7860
-
-## Modo offline
-En una máquina con internet:
-```bash
-python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2').save_pretrained('all-MiniLM-L6-v2')"
-```
-Copia la carpeta `all-MiniLM-L6-v2/` a `data/models/hf_cache/models--sentence-transformers--all-MiniLM-L6-v2/` (estructura estándar de HF o usa ENV `HF_HOME` apuntando a la carpeta).
-
-## Variables útiles
-- `EMB_MODEL`: nombre del modelo HF a usar (por defecto `sentence-transformers/all-MiniLM-L6-v2`)
-- `HF_HOME`: ruta de caché HF (por defecto `data/models/hf_cache`)
+## Extender
+- Implementa tu lógica real de estimación en `combined_estimate()`.
+- Si agregas estimador por similitud, pasa también `estimate_semantic` y ajusta el cálculo final.
