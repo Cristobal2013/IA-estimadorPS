@@ -1,0 +1,6 @@
+
+flask==2.3.3
+gunicorn==23.0.0
+# Para usar histórico con embeddings (recomendado):
+numpy>=1.23,<2.0
+sentence-transformers==2.7.0
