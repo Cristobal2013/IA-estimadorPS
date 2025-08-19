@@ -10,8 +10,20 @@ from estimator import (
     load_labeled_dataframe,
 )
 
+# ⬇️ Importa y registra el filtro hfmt
+from hfmt_filter import register_jinja_filters, _hfmt
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "dev-secret")
+
+# ⬇️ Registro del filtro (idempotente y a prueba de recompilaciones)
+register_jinja_filters(app)
+app.add_template_filter(_hfmt, name="hfmt")
+
+@app.before_request
+def _ensure_hfmt():
+    if 'hfmt' not in app.jinja_env.filters:
+        app.add_template_filter(_hfmt, name='hfmt')
 
 
 # -------------------------
@@ -258,16 +270,16 @@ def retrain():
     return redirect(url_for("index"))
 
 
-
-# --- Alias endpoint to satisfy template url_for('retrain_route') ---
+# --- Alias endpoint para templates que llamen url_for('retrain_route')
 try:
     if "retrain_route" not in app.view_functions and "retrain" in app.view_functions:
         @app.route("/retrain", methods=["POST"], endpoint="retrain_route")
         def retrain_route():
-            # Delegate to existing 'retrain' handler
             return app.view_functions["retrain"]()
 except Exception:
     pass
 
+
 if __name__ == "__main__":
+    # En Render usarás gunicorn app:app; esto es para ejecución local
     app.run(host="0.0.0.0", port=7860, debug=True)
