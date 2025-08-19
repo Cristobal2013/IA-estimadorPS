@@ -13,23 +13,14 @@ from estimator import (
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "dev-secret")
 
-# --- Jinja filters ---
+# --- Jinja filter: format hours ---
 @app.template_filter("hfmt")
 def hfmt(value):
-    """
-    Formatea horas para UI:
-    - 3   -> "3"
-    - 3.5 -> "3.5"
-    - 3.25 -> "3.25"
-    - 3.00 -> "3"
-    Sin unidades; la plantilla agrega " h".
-    """
     try:
         v = float(value)
         if abs(v - round(v)) < 1e-9:
             return str(int(round(v)))
-        s = f"{v:.2f}".rstrip("0").rstrip(".")
-        return s
+        return f"{v:.2f}".rstrip("0").rstrip(".")
     except Exception:
         return value
 
@@ -256,6 +247,27 @@ def index():
                 "source": src,
             })
 
+
+        # --- Build lightweight status for template ---
+        try:
+            emb_model = os.environ.get("EMB_MODEL", "sentence-transformers/paraphrase-MiniLM-L3-v2",
+        status=status)
+        except Exception:
+            emb_model = "unknown"
+        try:
+            dev_count = len(load_labeled_dataframe("desarrollo"))
+        except Exception:
+            dev_count = 0
+        try:
+            imp_count = len(load_labeled_dataframe("implementacion"))
+        except Exception:
+            imp_count = 0
+        status = {
+            "emb_enabled": True,
+            "kb_count": dev_count + imp_count,
+            "emb": True,
+            "emb_model": emb_model,
+        }
     return render_template(
         "index.html",
         form=form,
@@ -278,6 +290,29 @@ def retrain():
         flash(f"Error al reentrenar: {e}", "err")
     return redirect(url_for("index"))
 
+
+
+# --- Endpoint aliases for template compatibility ---
+try:
+    # Alias for retrain
+    if "retrain_route" not in app.view_functions and "retrain" in app.view_functions:
+        app.add_url_rule("/retrain", endpoint="retrain_route",
+                         view_func=app.view_functions["retrain"], methods=["POST"])
+except Exception:
+    pass
+
+try:
+    # Alias for upload
+    if "upload_route" not in app.view_functions:
+        # common upload endpoints you might have used
+        for cand in ("upload", "upload_csv", "csv_upload"):
+            if cand in app.view_functions:
+                # reuse the same rule if possible; otherwise map to /upload
+                app.add_url_rule("/upload", endpoint="upload_route",
+                                 view_func=app.view_functions[cand], methods=["POST"])
+                break
+except Exception:
+    pass
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=7860, debug=True)
