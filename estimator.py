@@ -19,18 +19,18 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 INDEX_DIR = DATA_DIR / "faiss"; INDEX_DIR.mkdir(parents=True, exist_ok=True)
 MODEL_DIR = DATA_DIR / "models"; MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-# cache HF persistente
+# HF cache persistente
 os.environ.setdefault("HF_HOME", str(MODEL_DIR / "hf_cache"))
 
 CATALOGO_CESQ  = DATA_DIR / "catalogo_cesq.csv"
 CATALOGO_PSTC  = DATA_DIR / "catalogo_pstc.csv"
 NEW_EST_CSV    = DATA_DIR / "estimaciones_nuevas.csv"
-NEW_EST_CS     = DATA_DIR / "estimaciones_nuevas.cs"   # por si el archivo viene con extensión .cs
+
 
 MODEL_NAME  = os.environ.get("EMB_MODEL", "sentence-transformers/paraphrase-MiniLM-L3-v2")
 MAX_SEQ_LEN = int(os.environ.get("MAX_SEQ_LEN", "256"))
 EMB_BATCH   = int(os.environ.get("EMB_BATCH", "8"))
-LAZY_BOOT   = os.environ.get("LAZY_BOOT", "1") == "1"  # evita entrenamientos pesados al arranque
+LAZY_BOOT   = os.environ.get("LAZY_BOOT", "1") == "1"  # evita reentrenos pesados en boot
 
 # ---------- Embeddings (singleton) ----------
 _MODEL: Optional[SentenceTransformer] = None
@@ -81,6 +81,28 @@ def _normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
     out.columns = [clean(c) for c in out.columns]
     return out
 
+def _read_csv_smart(path: Path) -> pd.DataFrame:
+    """
+    Lee CSV probando encoding y separador para evitar one-column por ; o \t.
+    Devuelve DF con columnas normalizadas.
+    """
+    encodings = ["utf-8", "utf-8-sig", "latin-1", "cp1252", "utf-16"]
+    seps = [",", ";", "\t", "|"]
+    best = None
+    for enc in encodings:
+        for sep in seps:
+            try:
+                df = pd.read_csv(path, encoding=enc, sep=sep, engine="python", low_memory=False)
+                if df.shape[1] >= 2 and len(df) >= 1:
+                    df = _normalize_cols(df)
+                    if best is None or df.shape[1] > best.shape[1]:
+                        best = df
+            except Exception:
+                continue
+    if best is not None:
+        return best
+    return _normalize_cols(pd.read_csv(path, encoding="utf-8", low_memory=False))
+
 _TEXT_HINTS   = ["summary","resumen","descripcion","descripción","title","título","nombre","text","nombre tarea"]
 _HOURS_HINTS  = ["original estimate","horas","hours","estimado","estimacion","estimación","hh","hhs"]
 _TICKET_HINTS = ["issue key","clave","ticket","id","key"]
@@ -122,8 +144,7 @@ def load_catalog(tipo: str):
     fname = CATALOGO_CESQ if tipo.lower().startswith("des") else CATALOGO_PSTC
     if not fname.exists():
         return []
-    df = pd.read_csv(fname, encoding="utf-8")
-    df = _normalize_cols(df)
+    df = _read_csv_smart(fname)
     tcol = _guess_col(df, _TEXT_HINTS) or df.columns[0]
     hcol = _guess_col(df, _HOURS_HINTS) or (df.columns[1] if len(df.columns)>1 else None)
     rows = []
@@ -147,8 +168,7 @@ def load_labeled_dataframe(tag: str) -> pd.DataFrame:
     # 1) Histórico (Jira export)
     hist_path = DATA_DIR / ("EstimacionCESQ.csv" if tag == "desarrollo" else "EstimacionesPSTC.csv")
     if hist_path.exists():
-        dfh = pd.read_csv(hist_path, encoding="utf-8", low_memory=False)
-        dfh = _normalize_cols(dfh)
+        dfh = _read_csv_smart(hist_path)
         tcol = _guess_col(dfh, _TEXT_HINTS) or dfh.columns[0]
         hcol = _guess_col(dfh, _HOURS_HINTS)
         kcol = _guess_col(dfh, _TICKET_HINTS)
@@ -157,8 +177,7 @@ def load_labeled_dataframe(tag: str) -> pd.DataFrame:
     # 2) Catálogo base
     cat_path = CATALOGO_CESQ if tag == "desarrollo" else CATALOGO_PSTC
     if cat_path.exists():
-        dfc = pd.read_csv(cat_path, encoding="utf-8")
-        dfc = _normalize_cols(dfc)
+        dfc = _read_csv_smart(cat_path)
         tcol = _guess_col(dfc, _TEXT_HINTS) or dfc.columns[0]
         hcol = _guess_col(dfc, _HOURS_HINTS) or (dfc.columns[1] if len(dfc.columns)>1 else None)
         frames.append(_make_rows(dfc, tcol, hcol, None, source="catalog"))
@@ -166,9 +185,7 @@ def load_labeled_dataframe(tag: str) -> pd.DataFrame:
     # 3) Nuevas confirmaciones del usuario (acepta .csv o .cs)
     new_path = NEW_EST_CSV if NEW_EST_CSV.exists() else (NEW_EST_CS if NEW_EST_CS.exists() else None)
     if new_path:
-        dfn = pd.read_csv(new_path, encoding="utf-8")
-        dfn = _normalize_cols(dfn)
-        # filtra por tipo
+        dfn = _read_csv_smart(new_path)
         if "tipo" in dfn.columns:
             mask = dfn["tipo"].astype(str).str.lower().str.contains("desarrollo" if tag == "desarrollo" else "pstc")
             dfn = dfn[mask]
@@ -182,12 +199,12 @@ def load_labeled_dataframe(tag: str) -> pd.DataFrame:
                 hcol = _guess_col(dfn, _HOURS_HINTS)
             frames.append(_make_rows(dfn, tcol, hcol, None, source="new"))
 
+    # Filtra frames vacíos para evitar FutureWarning de concat
+    frames = [f for f in frames if isinstance(f, pd.DataFrame) and not f.empty]
     if not frames:
-        # sin nada, devuelve DF vacío (evita reventar)
         return pd.DataFrame(columns=["text","hours","ticket","source"])
 
     df = pd.concat(frames, ignore_index=True)
-    # limpia duplicados triviales
     df = df.dropna(subset=["text"]).reset_index(drop=True)
     return df[["text","hours","ticket","source"]]
 
@@ -240,14 +257,12 @@ class EmbeddingsFaissEstimator:
 def _build_from_frame(tag: str, df: pd.DataFrame) -> int:
     if df.empty:
         # guarda dataset vacío para trazabilidad
-        df[["text","hours","ticket","source"]].to_csv(_dataset_path(tag), index=False, encoding="utf-8")
+        pd.DataFrame(columns=["text","hours","ticket","source"]).to_csv(_dataset_path(tag), index=False, encoding="utf-8")
         return 0
     est = EmbeddingsFaissEstimator(tag)
-    # hours NaN -> 0 para compat con fit; predict y la UI pueden mostrar '—'
     hours = [float(h) if h is not None and not pd.isna(h) else 0.0 for h in df["hours"].tolist()]
     est.fit(df["text"].astype(str).tolist(), hours)
     est.save()
-    # Persistimos dataset para la UI (para mapear idx -> fila)
     df[["text","hours","ticket","source"]].to_csv(_dataset_path(tag), index=False, encoding="utf-8")
     return len(df)
 
@@ -265,7 +280,6 @@ def train_index_per_type(full: bool=False) -> Dict[str, int]:
             if idx is not None and hrs is not None:
                 counts[tag] = len(hrs)
                 continue
-        # full o no había índice: construye desde DF combinado
         df = load_labeled_dataframe(tag)
         counts[tag] = _build_from_frame(tag, df)
 
@@ -277,11 +291,7 @@ def _tokens(s: str):
 
 def estimate_from_catalog(texto: str, tipo: str, top_n: int = 3, min_cover: float = 0.35) -> float:
     """
-    Calcula horas desde catálogo con un enfoque más robusto:
-    - Tokeniza texto del usuario y cada fila del catálogo.
-    - Score = cobertura de tokens del ítem en el texto (|intersección| / |tokens_item|).
-    - Solo considera ítems con cobertura >= min_cover.
-    - Suma SOLO los top_n ítems por score para evitar sobreacumulación.
+    Calcula horas desde catálogo con token overlap.
     """
     cat = load_catalog(tipo)
     if not cat:
