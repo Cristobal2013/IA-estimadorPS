@@ -1,214 +1,353 @@
-# estimator.py (Render-friendly, with EmbeddingsFaissEstimator API)
-# --------------------------------------------------------------
-# Compatible shim exposing `EmbeddingsFaissEstimator` expected by app.py.
-# Minimizes RAM for Render free tier (<=512 MB), CPU-only.
-#
-# Suggested env vars in Render:
-#   HF_HOME=/var/data/hf_cache
-#   EMB_MODEL=sentence-transformers/paraphrase-MiniLM-L3-v2
-#   OMP_NUM_THREADS=1
-#   MKL_NUM_THREADS=1
-#   NUMEXPR_NUM_THREADS=1
-#   TOKENIZERS_PARALLELISM=false
-#   FAISS_NUM_THREADS=1
-#   MAX_SEQ_LEN=256   (use 128 if still tight)
-#   EMB_BATCH=8       (use 4 or 2 if still tight)
-#
-from __future__ import annotations
-import os
-import logging
-from typing import List, Tuple, Optional
 
-# --------- Threading & memory knobs (set before heavy imports) ----------
+# estimator.py — patched for Render (<=512MB) and API-compatible with app.py
+# Public API kept: EmbeddingsFaissEstimator(tag), train_index_per_type(), load_labeled_dataframe(tag)
+# Key changes:
+#  - Singleton SentenceTransformer on CPU
+#  - Smaller default model + shorter seq length + small batch
+#  - Single-threaded BLAS/FAISS/tokenizers
+#  - Uses HF_HOME for cache (avoid /tmp churn)
+#  - Avoid re-instantiating model on every call
+
+from __future__ import annotations
+import os, re, json, glob
+from pathlib import Path
+from typing import List, Tuple, Optional, Dict
+
+# ---------- Memory limits & cache ----------
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("FAISS_NUM_THREADS", "1")
-os.environ.setdefault("HF_HOME", "/var/data/hf_cache")
+os.environ.setdefault("HF_HOME", str(Path(os.environ.get("DATA_DIR", "./data")) / "models" / "hf_cache"))
 
-# -------------------------- Imports -------------------------------------
 import numpy as np
+import pandas as pd
+import faiss
+
+# Delay torch import side-effects if present
 try:
     import torch  # type: ignore
     torch.set_num_threads(1)
     torch.set_grad_enabled(False)
 except Exception:
-    pass
+    torch = None  # type: ignore
 
-from sentence_transformers import SentenceTransformer  # type: ignore
-import faiss  # type: ignore
+# SentenceTransformer (lazy-singleton below)
+from sentence_transformers import SentenceTransformer
 
-# -------------------------- Logging -------------------------------------
-logger = logging.getLogger(__name__)
-if not logger.handlers:
-    _h = logging.StreamHandler()
-    _h.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s - %(message)s"))
-    logger.addHandler(_h)
-logger.setLevel(logging.INFO)
+# =========================
+# Configuración de rutas
+# =========================
+DATA_DIR = Path(os.environ.get("DATA_DIR", str(Path(__file__).parent / "data")))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+MODEL_DIR = DATA_DIR / "models"; MODEL_DIR.mkdir(parents=True, exist_ok=True)
+INDEX_DIR = DATA_DIR / "faiss" ; INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
-# -------------------------- Config --------------------------------------
-DEFAULT_MODEL = os.environ.get("EMB_MODEL", "sentence-transformers/paraphrase-MiniLM-L3-v2")
-MAX_SEQ_LEN = int(os.environ.get("MAX_SEQ_LEN", "256"))
-BATCH_SIZE  = int(os.environ.get("EMB_BATCH", "8"))
-USE_FALLBACK = os.environ.get("EMB_FALLBACK", "0") == "1"
+# Model & encode params (lighter than all-MiniLM-L6-v2)
+MODEL_NAME  = os.environ.get("EMB_MODEL", "sentence-transformers/paraphrase-MiniLM-L3-v2")
+MAX_SEQ_LEN = int(os.environ.get("MAX_SEQ_LEN", "256"))   # use 128 if still OOM
+BATCH_SIZE  = int(os.environ.get("EMB_BATCH", "8"))       # use 4 or 2 if still OOM
 
-# ----------------------- Internal helpers -------------------------------
-_model: Optional[SentenceTransformer] = None
+NEW_EST_PATH   = DATA_DIR / "estimaciones_nuevas.csv"
+CATALOGO_CESQ  = DATA_DIR / "catalogo_cesq.csv"
+CATALOGO_PSTC  = DATA_DIR / "catalogo_pstc.csv"
 
-def _get_model(model_name: str) -> SentenceTransformer:
-    global _model
-    if _model is None:
-        logger.info(f"Loading embeddings model: {model_name}")
-        _model = SentenceTransformer(model_name, device="cpu")
+def _dataset_csv_path(tag: str) -> Path:
+    assert tag in ("desarrollo", "implementacion")
+    return INDEX_DIR / f"faiss_{tag}_dataset.csv"
+
+# =========================
+# Ubicar CSV históricos
+# =========================
+def _find_csv(pattern: str) -> Path:
+    candidates = []
+    candidates.extend(sorted(glob.glob(str(DATA_DIR / pattern))))
+    candidates.extend(sorted(glob.glob(str(Path(__file__).parent / pattern))))
+    if not candidates:
+        raise FileNotFoundError(f"No se encontró CSV con patrón: {pattern}")
+    return Path(candidates[0])
+
+def _cesq_path() -> Path: return _find_csv("*CESQ*.csv")
+def _pstc_path() -> Path: return _find_csv("*PSTC*.csv")
+
+# =========================
+# Normalización / Ticket
+# =========================
+def _normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
+    def clean(s: str) -> str: return str(s).replace("\ufeff", "").strip()
+    out = df.copy(); out.columns = [clean(c) for c in out.columns]; return out
+
+def _pick_ticket_column(df: pd.DataFrame) -> Optional[str]:
+    norm_map = {c.lower().replace(" ", ""): c for c in df.columns}
+    for k in ["key","issuekey","issue key","id","ticket","número","numero","nro","n°"]:
+        if k in norm_map: return norm_map[k]
+    for c in df.columns:
+        series = df[c].astype(str)
+        if series.str.contains(r"\b(?:CESQ|PSTC)-\d+\b", regex=True).any(): return c
+    return None
+
+# =========================
+# Horas desde Comments
+# =========================
+def _extract_hours_from_comments_row(row) -> Optional[float]:
+    comment_cols = [c for c in row.index if str(c).startswith("Comments")]
+    texts = [str(row[c]) for c in comment_cols if isinstance(row.get(c), str)]
+    blob = "\n".join(texts) if texts else ""
+    m = re.search(r"(?mi)^\s*\|?\s*\*?total\*?\s*\|\s*\*?(\d+(?:[.,]\d+)?)\*?\s*\|?", blob)
+    if m: return float(m.group(1).replace(",", "."))
+    if re.search(r"(?mi)^\s*\|.*\bHH\b.*\|", blob):
+        total, any_row = 0.0, False
+        for line in blob.splitlines():
+            mrow = re.match(r"^\s*\|.*?\|\s*\*?(\d+(?:[.,]\d+)?)\*?\|\s*$", line)
+            if mrow and not re.search(r"(?i)\b(total|actividad|hh)\b", line):
+                any_row = True; total += float(mrow.group(1).replace(",", "."))
+        if any_row and total > 0: return total
+    low = blob.lower()
+    m = re.search(r"total\W*(\d+(?:[.,]\d+)?)\s*h\b", low)
+    if m: return float(m.group(1).replace(",", "."))
+    matches_h = re.findall(r"(?<!\d)(\d+(?:[.,]\d+)?)\s*h\b", low)
+    if matches_h: return sum(float(x.replace(",", ".")) for x in matches_h)
+    matches_u = re.findall(r"(\d+(?:[.,]\d+)?)\s*(?:horas|hora|hrs|hr|hh)\b", low)
+    if matches_u: return sum(float(x.replace(",", ".")) for x in matches_u)
+    m = re.findall(r"(\d+):(\d{1,2})", low)
+    if m: return sum(int(h) + int(mm) / 60.0 for h, mm in m)
+    m = re.findall(r"(\d+(?:[.,]\d+)?)\s*min\b", low)
+    if m: return sum(float(x.replace(",", ".")) / 60.0 for x in m)
+    return None
+
+def _build_text(df: pd.DataFrame) -> pd.Series:
+    pref = [c for c in ["Summary","Descripción","Descripcion","Description","Issue Type","Tipo","Tipo de incidencia"] if c in df.columns]
+    if pref: return df[pref].astype(str).agg(" . ".join, axis=1)
+    obj_cols = [c for c in df.columns if df[c].dtype == object]
+    if not obj_cols:
+        cand = df.columns[:3].tolist(); return df[cand].astype(str).agg(" . ".join, axis=1)
+    lengths = {c: df[c].astype(str).str.len().mean() for c in obj_cols}
+    top = sorted(lengths, key=lengths.get, reverse=True)[:3]
+    return df[top].astype(str).agg(" . ".join, axis=1)
+
+# =========================
+# Carga de datasets
+# =========================
+def _load_and_label_historic(path: Path) -> pd.DataFrame:
+    df = pd.read_csv(path, encoding="utf-8", sep=None, engine="python")
+    df = _normalize_cols(df)
+    hours_from_comments = df.apply(_extract_hours_from_comments_row, axis=1)
+    candidates = [c for c in df.columns if str(c).lower() in [
+        "horas","hh","tiempo","time spent","Σ time spent","sum of time spent","logged hours",
+        "tiemposumado","tiempoint","tiempoinvertido","esfuerzo","original estimate",
+        "remaining estimate","estimate","estimado","estimacion","estimación"
+    ] or ("hora" in str(c).lower()) or ("time" in str(c).lower() and "spent" in str(c).lower())]
+    hours_explicit = None
+    def _parse(v):
+        s = str(v).strip().lower().replace(",", ".")
+        if not s or s in ("nan","none"): return None
+        m = re.match(r"^(\d+):(\d{1,2})$", s)
+        if m: return int(m.group(1)) + int(m.group(2)) / 60.0
+        m = re.match(r"^(\d+(?:\.\d+)?)\s*min", s)
+        if m: return float(m.group(1)) / 60.0
+        m = re.match(r"^(\d+(?:\.\d+)?)(?:\s*h|\s*hh)?$", s)
+        if m: return float(m.group(1))
+        return None
+    for c in candidates:
+        parsed = df[c].map(_parse)
+        if parsed.notna().sum() > 0: hours_explicit = parsed; break
+    df["hours"] = hours_from_comments.fillna(hours_explicit) if hours_explicit is not None else hours_from_comments
+    df["text"] = _build_text(df)
+    tcol = _pick_ticket_column(df)
+    df["ticket"] = df[tcol].astype(str) if tcol and tcol in df.columns else df.index.astype(str)
+    df = df.dropna(subset=["hours"])[["text","hours","ticket"]].reset_index(drop=True)
+    df["source"] = "historic"; return df
+
+def _load_new_estimations(tag: str) -> pd.DataFrame:
+    if not NEW_EST_PATH.exists(): return pd.DataFrame(columns=["text","hours","ticket","source"])
+    df = pd.read_csv(NEW_EST_PATH, encoding="utf-8"); df = _normalize_cols(df)
+    if "tipo" not in df.columns or "texto" not in df.columns: return pd.DataFrame(columns=["text","hours","ticket","source"])
+    df["tipo"] = df["tipo"].astype(str).str.lower().map({
+        "desarrollo":"desarrollo","implementacion":"implementacion","implementación":"implementacion",
+        "impl":"implementacion","dev":"desarrollo","cesq":"desarrollo","pstc":"implementacion",
+    })
+    df = df[df["tipo"] == tag].copy()
+    if df.empty: return pd.DataFrame(columns=["text","hours","ticket","source"])
+    for col in ["horas_reales","estimacion_final","estimacion_ia"]:
+        if col not in df.columns: df[col] = np.nan
+    df["hours"] = df["horas_reales"].fillna(df["estimacion_final"]).fillna(df["estimacion_ia"])
+    df = df.dropna(subset=["hours","texto"]).copy()
+    df = df[df["hours"].astype(float) > 0]
+    df["ticket"] = [f"NEW-{i}" for i in range(len(df))]
+    df = df.rename(columns={"texto":"text"})
+    df = df[["text","hours","ticket"]].reset_index(drop=True); df["source"] = "new"; return df
+
+def _load_catalog(path: Path) -> pd.DataFrame:
+    if not path.exists(): return pd.DataFrame(columns=["text","hours","ticket","source"])
+    df = pd.read_csv(path, encoding="utf-8"); df = _normalize_cols(df)
+    name_col, hours_col = None, None
+    for c in df.columns:
+        lc = str(c).lower()
+        if name_col is None and any(k in lc for k in ["tarea","nombre","descripción","descripcion","actividad"]): name_col = c
+        if hours_col is None and any(k in lc for k in ["hora","horas","hh","estimado","estimacion","estimación"]): hours_col = c
+    if name_col is None or hours_col is None:
+        if len(df.columns) >= 2: name_col, hours_col = df.columns[:2]
+        else: return pd.DataFrame(columns=["text","hours","ticket","source"])
+    out = df[[name_col, hours_col]].dropna()
+    out = out.rename(columns={name_col:"text", hours_col:"hours"})
+    out["hours"] = pd.to_numeric(out["hours"], errors="coerce"); out = out.dropna(subset=["hours"])
+    out["ticket"] = [f"CAT-{i}" for i in range(len(out))]
+    out["text"] = out["text"].astype(str)
+    out = out[["text","hours","ticket"]].reset_index(drop=True); out["source"] = "catalog"; return out
+
+# =========================
+# Embeddings + FAISS (singleton model)
+# =========================
+_MODEL: Optional[SentenceTransformer] = None
+
+def _get_model() -> SentenceTransformer:
+    global _MODEL
+    if _MODEL is None:
+        _MODEL = SentenceTransformer(MODEL_NAME, device="cpu")
         try:
-            _model.max_seq_length = MAX_SEQ_LEN
+            _MODEL.max_seq_length = MAX_SEQ_LEN
         except Exception:
             pass
-        logger.info("Model loaded.")
-    return _model
+    return _MODEL
 
-def _embed(texts: List[str], model: SentenceTransformer) -> np.ndarray:
-    if not texts:
-        return np.zeros((0, 0), dtype="float32")
-    embs = model.encode(
+def _embed_texts(texts: List[str]) -> np.ndarray:
+    if not texts: return np.zeros((0, 0), dtype="float32")
+    model = _get_model()
+    emb = model.encode(
         texts,
         batch_size=BATCH_SIZE,
-        normalize_embeddings=True,  # cosine via inner product
         show_progress_bar=False,
+        normalize_embeddings=True,
         convert_to_numpy=True,
-    ).astype("float32")
-    return embs
+    )
+    return np.asarray(emb, dtype="float32")
 
-# ----------------------- Public functions (previous API) ----------------
-def embed_texts(texts: List[str]) -> np.ndarray:
-    model = _get_model(DEFAULT_MODEL)
-    return _embed(texts, model)
+def _save_faiss(index, path: Path): faiss.write_index(index, str(path))
+def _load_faiss(path: Path): return faiss.read_index(str(path))
 
-class SearchIndex:
-    def __init__(self, dim: int):
-        self.dim = dim
-        self.index = faiss.IndexFlatIP(dim)
-
-    def add(self, embs: np.ndarray) -> None:
-        if embs.dtype != np.float32:
-            embs = embs.astype(np.float32, copy=False)
-        if embs.ndim != 2 or embs.shape[1] != self.dim:
-            raise ValueError(f"Expected (N,{self.dim}) float32, got {embs.shape} {embs.dtype}")
-        self.index.add(embs)
-
-    def search(self, query_embs: np.ndarray, k: int = 5) -> Tuple[np.ndarray, np.ndarray]:
-        if query_embs.dtype != np.float32:
-            query_embs = query_embs.astype(np.float32, copy=False)
-        D, I = self.index.search(query_embs, k)
-        return D, I
-
-def build_index(corpus_texts: List[str]) -> Tuple[SearchIndex, np.ndarray]:
-    embs = embed_texts(corpus_texts)
-    if embs.size == 0:
-        raise ValueError("No embeddings built (empty corpus).")
-    idx = SearchIndex(dim=embs.shape[1])
-    idx.add(embs)
-    return idx, embs
-
-def query(corpus_embs: np.ndarray, queries: List[str], k: int = 5) -> Tuple[np.ndarray, np.ndarray]:
-    if corpus_embs.ndim != 2:
-        raise ValueError("corpus_embs must be 2D (N, D)")
-    idx = SearchIndex(dim=corpus_embs.shape[1])
-    idx.add(corpus_embs)
-    q_embs = embed_texts(queries)
-    return idx.search(q_embs, k=k)
-
-# ----------------------- Compatibility class ----------------------------
 class EmbeddingsFaissEstimator:
-    """
-    Drop-in estimator expected by app.py:
-      - __init__(model_name: str | None = None, max_seq_len: int = 256, batch_size: int = 8)
-      - fit(corpus_texts: List[str]) -> None
-      - search(query_texts: List[str], k: int = 5) -> Tuple[np.ndarray, np.ndarray]
-      - embed(texts: List[str]) -> np.ndarray
-      - add(texts: List[str]) -> None
-    Attributes:
-      - index: FAISS flat IP index
-      - corpus_texts: original texts
-      - corpus_embs: embeddings matrix (N, D)
-      - dim: embedding dimension
-    """
-    def __init__(
-        self,
-        model_name: Optional[str] = None,
-        max_seq_len: Optional[int] = None,
-        batch_size: Optional[int] = None,
-        use_fallback: Optional[bool] = None,
-    ) -> None:
-        self.model_name = model_name or DEFAULT_MODEL
-        if max_seq_len is not None:
-            os.environ["MAX_SEQ_LEN"] = str(max_seq_len)
-        if batch_size is not None:
-            os.environ["EMB_BATCH"] = str(batch_size)
-        if use_fallback is not None:
-            os.environ["EMB_FALLBACK"] = "1" if use_fallback else "0"
+    def __init__(self, tag: str):
+        assert tag in ("desarrollo", "implementacion")
+        self.tag = tag
+        self.index = None
+        self.hours = None
 
-        self.model: Optional[SentenceTransformer] = None
-        self.index: Optional[SearchIndex] = None
-        self.corpus_texts: List[str] = []
-        self.corpus_embs: Optional[np.ndarray] = None
-        self.dim: Optional[int] = None
+    def _paths(self) -> Dict[str, Path]:
+        stem = f"faiss_{self.tag}"
+        return {
+            "index": INDEX_DIR / f"{stem}.index",
+            "hours": INDEX_DIR / f"{stem}_hours.json",
+            "meta":  INDEX_DIR / f"{stem}_meta.json",
+        }
 
-    def _ensure_model(self) -> SentenceTransformer:
-        if self.model is None:
-            self.model = _get_model(self.model_name)
-        return self.model
+    def fit(self, texts: List[str], hours: List[float]):
+        emb = _embed_texts(texts)
+        if emb.size == 0:
+            raise ValueError("No hay textos para entrenar")
+        dim = emb.shape[1]
+        index = faiss.IndexFlatIP(dim)  # cosine via normalized inner product
+        index.add(emb)
+        self.index = index
+        self.hours = list(map(float, hours))
 
-    # Public API
-    def embed(self, texts: List[str]) -> np.ndarray:
-        model = self._ensure_model()
-        return _embed(texts, model)
+    def save(self):
+        p = self._paths()
+        _save_faiss(self.index, p["index"])
+        Path(p["hours"]).write_text(json.dumps(self.hours, ensure_ascii=False))
+        Path(p["meta"]).write_text(json.dumps({"n_docs": len(self.hours), "model": MODEL_NAME}, ensure_ascii=False))
 
-    def fit(self, corpus_texts: List[str]) -> None:
-        self.corpus_texts = list(corpus_texts)
-        embs = self.embed(self.corpus_texts)
-        if embs.size == 0:
-            raise ValueError("Empty corpus after embedding.")
-        self.dim = int(embs.shape[1])
-        self.index = SearchIndex(dim=self.dim)
-        self.index.add(embs)
-        self.corpus_embs = embs
+    def load(self):
+        p = self._paths()
+        self.index = _load_faiss(p["index"])
+        self.hours = json.loads(Path(p["hours"]).read_text())
+        meta = json.loads(Path(p["meta"]).read_text())
+        return meta
 
-    def add(self, texts: List[str]) -> None:
-        if not texts:
-            return
-        if self.index is None or self.dim is None:
-            # Treat as first fit
-            self.fit(texts)
-            return
-        embs = self.embed(texts)
-        if embs.shape[1] != self.dim:
-            raise ValueError(f"Embedding dim changed. Expected {self.dim}, got {embs.shape[1]}")
-        self.index.add(embs)
-        # append to corpus
-        if self.corpus_embs is None:
-            self.corpus_embs = embs
-        else:
-            self.corpus_embs = np.vstack([self.corpus_embs, embs])
-        self.corpus_texts.extend(texts)
-
-    def search(self, query_texts: List[str], k: int = 5) -> Tuple[np.ndarray, np.ndarray]:
+    def predict(self, text: str, k: int = 5) -> Tuple[float, List[Tuple[int, float, float]]]:
         if self.index is None:
-            raise RuntimeError("Index not built. Call fit(corpus_texts) first.")
-        q_embs = self.embed(query_texts)
-        return self.index.search(q_embs, k=k)
+            raise RuntimeError("Índice no cargado")
+        q = _embed_texts([text])
+        D, I = self.index.search(q, k)
+        sims = D[0].tolist()
+        idxs = I[0].tolist()
+        neighbors: List[Tuple[int, float, float]] = []
+        for i, s in zip(idxs, sims):
+            if i == -1: continue
+            neighbors.append((int(i), float(s), float(self.hours[i])))
+        total_sim = sum(s for _, s, _ in neighbors) or 1.0
+        est = sum(h * s for _, s, h in neighbors) / total_sim if neighbors else 0.0
+        return est, neighbors
 
-# -------------------------- Self-test -----------------------------------
-if __name__ == "__main__":
-    data = [
-        "Crear endpoint Flask para estimación de horas de ticket CESQ",
-        "Implementar login automático en SII usando certificado digital",
-        "Generar embeddings con MiniLM y buscar similares con FAISS",
-        "Automatizar carga de clientes en Sovos desde CSV",
-        "Dashboard HTML con filtros por trimestre y manager",
-    ]
-    est = EmbeddingsFaissEstimator()
-    est.fit(data)
-    D, I = est.search(["estimación de horas con embeddings"], k=3)
-    print("Top-3:", I[0], D[0])
+# =========================
+# Entrenamiento por tipo
+# =========================
+def train_index_per_type() -> Dict[str, int]:
+    counts = {"desarrollo": 0, "implementacion": 0}
+    # --- Desarrollo (CESQ) ---
+    try:
+        df_hist = _load_and_label_historic(_cesq_path())
+    except Exception as e:
+        print("WARN CESQ:", e); df_hist = pd.DataFrame(columns=["text","hours","ticket","source"])
+    df_new = _load_new_estimations("desarrollo")
+    df_cat = _load_catalog(CATALOGO_CESQ)
+    df_dev = pd.concat([df_hist, df_cat, df_new], ignore_index=True)
+    if not df_dev.empty:
+        model_dev = EmbeddingsFaissEstimator("desarrollo")
+        model_dev.fit(df_dev["text"].tolist(), df_dev["hours"].tolist())
+        model_dev.save()
+        counts["desarrollo"] = len(df_dev)
+        ds_path = _dataset_csv_path("desarrollo")
+        cols = [c for c in ["text","hours","ticket","source"] if c in df_dev.columns]
+        df_dev[cols].reset_index(drop=True).to_csv(ds_path, index=False, encoding="utf-8")
+    # --- Implementación (PSTC) ---
+    try:
+        df_hist = _load_and_label_historic(_pstc_path())
+    except Exception as e:
+        print("WARN PSTC:", e); df_hist = pd.DataFrame(columns=["text","hours","ticket","source"])
+    df_new = _load_new_estimations("implementacion")
+    df_cat = _load_catalog(CATALOGO_PSTC)
+    df_imp = pd.concat([df_hist, df_cat, df_new], ignore_index=True)
+    if not df_imp.empty:
+        model_imp = EmbeddingsFaissEstimator("implementacion")
+        model_imp.fit(df_imp["text"].tolist(), df_imp["hours"].tolist())
+        model_imp.save()
+        counts["implementacion"] = len(df_imp)
+        ds_path = _dataset_csv_path("implementacion")
+        cols = [c for c in ["text","hours","ticket","source"] if c in df_imp.columns]
+        df_imp[cols].reset_index(drop=True).to_csv(ds_path, index=False, encoding="utf-8")
+    if counts["desarrollo"] == 0 and counts["implementacion"] == 0:
+        raise RuntimeError("No hay datos con horas en CESQ/PSTC ni en catálogos.")
+    return counts
+
+# =========================
+# Dataset para la UI
+# =========================
+def load_labeled_dataframe(tag: str) -> pd.DataFrame:
+    ds_path = _dataset_csv_path(tag)
+    if ds_path.exists():
+        try:
+            df = pd.read_csv(ds_path, encoding="utf-8")
+            if "text" in df.columns and "hours" in df.columns:
+                if "ticket" not in df.columns: df["ticket"] = [str(i) for i in range(len(df))]
+                if "source" not in df.columns: df["source"] = "unknown"
+                return df[["text","hours","ticket","source"]].reset_index(drop=True)
+        except Exception as e:
+            print("WARN load_labeled_dataframe persisted read:", e)
+    if tag == "desarrollo":
+        try: df_hist = _load_and_label_historic(_cesq_path())
+        except Exception: df_hist = pd.DataFrame(columns=["text","hours","ticket","source"])
+        df_new = _load_new_estimations("desarrollo")
+        df_cat = _load_catalog(CATALOGO_CESQ)
+        df = pd.concat([df_hist, df_cat, df_new], ignore_index=True)
+    elif tag == "implementacion":
+        try: df_hist = _load_and_label_historic(_pstc_path())
+        except Exception: df_hist = pd.DataFrame(columns=["text","hours","ticket","source"])
+        df_new = _load_new_estimations("implementacion")
+        df_cat = _load_catalog(CATALOGO_PSTC)
+        df = pd.concat([df_hist, df_cat, df_new], ignore_index=True)
+    else:
+        raise ValueError("tag inválido: usa 'desarrollo' o 'implementacion'")
+    if "ticket" not in df.columns: df["ticket"] = [str(i) for i in range(len(df))]
+    if "source" not in df.columns: df["source"] = "unknown"
+    return df.reset_index(drop=True)[["text","hours","ticket","source"]]
