@@ -13,43 +13,6 @@ from estimator import (
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "dev-secret")
 
-# --- Jinja filter: format hours ---
-@app.template_filter("hfmt")
-def hfmt(value):
-    try:
-        v = float(value)
-        if abs(v - round(v)) < 1e-9:
-            return str(int(round(v)))
-        return f"{v:.2f}".rstrip("0").rstrip(".")
-    except Exception:
-        return value
-
-# --- Global `status` for templates (so it's never undefined) ---
-@app.context_processor
-def inject_status():
-    try:
-        emb_model = os.environ.get("EMB_MODEL", "sentence-transformers/paraphrase-MiniLM-L3-v2")
-    except Exception:
-        emb_model = "unknown"
-    # counts are best-effort; avoid breaking page on failure
-    kb_count = 0
-    try:
-        kb_count += len(load_labeled_dataframe("desarrollo"))
-    except Exception:
-        pass
-    try:
-        kb_count += len(load_labeled_dataframe("implementacion"))
-    except Exception:
-        pass
-    status = {
-        "emb_enabled": True,
-        "kb_count": kb_count,
-        "emb": True,
-        "emb_model": emb_model,
-    }
-    return dict(status=status)
-
-
 
 # -------------------------
 # Helpers
@@ -295,24 +258,34 @@ def retrain():
     return redirect(url_for("index"))
 
 
-
-# --- Endpoint aliases for template compatibility ---
-try:
-    if "retrain_route" not in app.view_functions and "retrain" in app.view_functions:
-        app.add_url_rule("/retrain", endpoint="retrain_route",
-                         view_func=app.view_functions["retrain"], methods=["POST"])
-except Exception:
-    pass
-
-try:
-    if "upload_route" not in app.view_functions:
-        for cand in ("upload", "upload_csv", "csv_upload"):
-            if cand in app.view_functions:
-                app.add_url_rule("/upload", endpoint="upload_route",
-                                 view_func=app.view_functions[cand], methods=["POST"])
-                break
-except Exception:
-    pass
-
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=7860, debug=True)
+
+
+# --- Minimal upload endpoint to match template's url_for('upload_route') ---
+try:
+    if "upload_route" not in app.view_functions:
+        from werkzeug.utils import secure_filename
+        from flask import request, redirect, url_for, flash
+        from pathlib import Path as _Path
+        import os as _os
+
+        @app.route("/upload", methods=["POST"], endpoint="upload_route")
+        def upload_route():
+            try:
+                file = request.files.get("file")
+                if file is None or file.filename == "":
+                    flash("Selecciona un CSV para subir.", "err")
+                    return redirect(url_for("index"))
+                fname = secure_filename(file.filename)
+                base_dir = _Path(_os.environ.get("DATA_DIR", str(_Path(__file__).parent / "data")))
+                upload_dir = base_dir / "uploads"
+                upload_dir.mkdir(parents=True, exist_ok=True)
+                dest = upload_dir / fname
+                file.save(dest)
+                flash(f"CSV subido: {fname}", "ok")
+            except Exception as e:
+                flash(f"Error al subir CSV: {e}", "err")
+            return redirect(url_for("index"))
+except Exception:
+    pass
