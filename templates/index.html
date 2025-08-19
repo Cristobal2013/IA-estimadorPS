@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html lang="es">
 <head>
@@ -14,7 +13,6 @@
     <div class="status">
       <span class="tag">Embeddings: {{ 'ON' if status.emb_enabled else 'OFF' }}</span>
       <span class="tag">KB: {{ status.kb_count }}</span>
-      <span class="tag">Emb index: {{ 'OK' if status.emb else '—' }}</span>
     </div>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
@@ -29,18 +27,36 @@
 
     <!-- Form de estimación -->
     <form method="post" action="{{ url_for('index') }}" class="card">
-      <input type="hidden" name="action" value="estimate" />
+      <input type="hidden" name="accion" value="estimar" />
       <div class="field">
         <label for="tipo">Tipo de requerimiento</label>
         <select id="tipo" name="tipo">
-          <option value="CESQ" {{ 'selected' if form.tipo == 'CESQ' else '' }}>CESQ (desarrollo)</option>
-          <option value="PSTC" {{ 'selected' if form.tipo == 'PSTC' else '' }}>PSTC (implementación)</option>
+          <option value="desarrollo" {{ 'selected' if form.tipo == 'desarrollo' else '' }}>CESQ (desarrollo)</option>
+          <option value="implementacion" {{ 'selected' if form.tipo == 'implementacion' else '' }}>PSTC (implementación)</option>
         </select>
       </div>
 
       <div class="field">
-        <label for="descripcion">Descripción</label>
-        <textarea id="descripcion" name="descripcion" rows="6" placeholder="Describe el ticket o requerimiento...">{{ form.descripcion }}</textarea>
+        <label for="texto">Descripción</label>
+        <textarea id="texto" name="texto" rows="6" placeholder="Describe el ticket o requerimiento...">{{ form.texto }}</textarea>
+      </div>
+
+      <div class="field">
+        <label for="metodo">Método</label>
+        <select id="metodo" name="metodo">
+          <option value="softmax" {{ 'selected' if form.metodo == 'softmax' else '' }}>Softmax</option>
+          <option value="top1" {{ 'selected' if form.metodo == 'top1' else '' }}>Top 1</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="origen">Origen</label>
+        <select id="origen" name="origen">
+          <option value="todos" {{ 'selected' if form.origen == 'todos' else '' }}>Todos</option>
+          <option value="historic" {{ 'selected' if form.origen == 'historic' else '' }}>Histórico</option>
+          <option value="catalog" {{ 'selected' if form.origen == 'catalog' else '' }}>Catálogo</option>
+          <option value="new" {{ 'selected' if form.origen == 'new' else '' }}>Nuevos</option>
+        </select>
       </div>
 
       <div class="actions">
@@ -48,39 +64,35 @@
       </div>
     </form>
 
-    <!-- Acciones de histórico (fuera del form principal para evitar anidación) -->
+    <!-- Solo reentrenar (sin upload) -->
     <div class="card actions-row">
       <form method="post" action="{{ url_for('retrain_route') }}">
         <button type="submit" class="secondary">Reentrenar histórico</button>
       </form>
-      <form method="post" action="{{ url_for('upload_route') }}" enctype="multipart/form-data">
-        <input type="file" name="file" accept=".csv" />
-        <button type="submit" class="secondary">Subir CSV</button>
-      </form>
     </div>
 
+    <!-- Resultados: usa las variables que pasa app.py -->
     <div class="results">
-      <div>Catálogo base: <span class="pill">{{ estimate_catalog|hfmt }} h</span></div>
-      <div>IA similitud: <span class="pill">{{ estimate_semantic|hfmt }} h</span></div>
-      <div>IA combinada: <span class="pill">{{ estimate|hfmt }} h</span></div>
+      <div>Estimación (método): <span class="pill">{{ estimate is not none and (estimate|hfmt ~ ' h') or '—' }}</span></div>
+      <div>Top 1: <span class="pill">{{ estimate_top1 is not none and (estimate_top1|hfmt ~ ' h') or '—' }}</span></div>
     </div>
 
-    {% if kb_hits and kb_hits|length > 0 %}
+    {% if examples and examples|length > 0 %}
     <div class="card">
-      <h3>Coincidencias del histórico (top {{ top_k }})</h3>
+      <h3>Coincidencias (top {{ examples|length }})</h3>
       <table class="tbl">
         <thead>
-          <tr><th>#</th><th>ID</th><th>Tipo</th><th>Horas</th><th>Similitud</th><th>Descripción</th></tr>
+          <tr><th>#</th><th>Ticket</th><th>Horas</th><th>Similitud</th><th>Fuente</th><th>Descripción</th></tr>
         </thead>
         <tbody>
-          {% for h in kb_hits %}
+          {% for h in examples %}
           <tr>
             <td>{{ loop.index }}</td>
-            <td>{{ h.id }}</td>
-            <td>{{ h.tipo }}</td>
-            <td>{{ h.horas if h.horas is not none else '—' }}</td>
-            <td>{{ '{:.3f}'.format(h.sim) if h.sim is defined else '—' }}</td>
-            <td class="wrap">{{ h.descripcion[:300] }}{% if h.descripcion|length > 300 %}…{% endif %}</td>
+            <td>{{ h.ticket }}</td>
+            <td>{{ h.horas is not none and (h.horas|hfmt) or '—' }}</td>
+            <td>{{ h.sim is not none and ('%.3f'|format(h.sim)) or '—' }}</td>
+            <td>{{ h.source }}</td>
+            <td class="wrap">{{ h.texto }}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -89,7 +101,7 @@
     {% endif %}
 
     <footer>
-      <small>Render-ready • Flask + Gunicorn • Catálogo + Histórico + Reentrenar + Upload</small>
+      <small>Render-ready • Flask + Gunicorn • Reentrenar desde UI • Sin upload</small>
     </footer>
   </div>
 </body>
