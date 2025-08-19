@@ -1,5 +1,4 @@
-
-import os, re, json, glob
+import os, re, json
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
 
@@ -25,7 +24,8 @@ os.environ.setdefault("HF_HOME", str(MODEL_DIR / "hf_cache"))
 
 CATALOGO_CESQ  = DATA_DIR / "catalogo_cesq.csv"
 CATALOGO_PSTC  = DATA_DIR / "catalogo_pstc.csv"
-NEW_EST_PATH   = DATA_DIR / "estimaciones_nuevas.csv"
+NEW_EST_CSV    = DATA_DIR / "estimaciones_nuevas.csv"
+NEW_EST_CS     = DATA_DIR / "estimaciones_nuevas.cs"   # por si el archivo viene con extensión .cs
 
 MODEL_NAME  = os.environ.get("EMB_MODEL", "sentence-transformers/paraphrase-MiniLM-L3-v2")
 MAX_SEQ_LEN = int(os.environ.get("MAX_SEQ_LEN", "256"))
@@ -38,16 +38,22 @@ def _get_model() -> SentenceTransformer:
     global _MODEL
     if _MODEL is None:
         _MODEL = SentenceTransformer(MODEL_NAME, device="cpu")
-        try: _MODEL.max_seq_length = MAX_SEQ_LEN
-        except Exception: pass
+        try:
+            _MODEL.max_seq_length = MAX_SEQ_LEN
+        except Exception:
+            pass
     return _MODEL
 
 def _embed_texts(texts: List[str]) -> np.ndarray:
-    if not texts: return np.zeros((0,0), dtype="float32")
+    if not texts:
+        return np.zeros((0, 0), dtype="float32")
     m = _get_model()
     embs = m.encode(
-        texts, batch_size=EMB_BATCH, show_progress_bar=False,
-        normalize_embeddings=True, convert_to_numpy=True
+        texts,
+        batch_size=EMB_BATCH,
+        show_progress_bar=False,
+        normalize_embeddings=True,
+        convert_to_numpy=True,
     )
     return np.asarray(embs, dtype="float32")
 
@@ -67,49 +73,123 @@ def _load_index(tag: str):
     hrs = json.loads(Path(hp).read_text())
     return idx, hrs
 
-# ---------- CSV utils (livianos) ----------
+# ---------- CSV utils (robustos) ----------
 def _normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
-    def clean(s: str) -> str: return str(s).replace("\ufeff","").strip()
-    out = df.copy(); out.columns = [clean(c) for c in out.columns]; return out
+    def clean(s: str) -> str:
+        return str(s).replace("\ufeff", "").strip()
+    out = df.copy()
+    out.columns = [clean(c) for c in out.columns]
+    return out
 
-def _load_catalog(path: Path) -> pd.DataFrame:
-    if not path.exists(): return pd.DataFrame(columns=["text","hours","ticket","source"])
-    df = pd.read_csv(path, encoding="utf-8"); df = _normalize_cols(df)
-    name_col, hours_col = None, None
+_TEXT_HINTS   = ["summary","resumen","descripcion","descripción","title","título","nombre","text","nombre tarea"]
+_HOURS_HINTS  = ["original estimate","horas","hours","estimado","estimacion","estimación","hh","hhs"]
+_TICKET_HINTS = ["issue key","clave","ticket","id","key"]
+
+def _guess_col(df: pd.DataFrame, hints: List[str], default: Optional[str]=None) -> Optional[str]:
     for c in df.columns:
         lc = str(c).lower()
-        if name_col is None and any(k in lc for k in ["tarea","nombre","descripción","descripcion","actividad","text","nombre tarea"]): name_col = c
-        if hours_col is None and any(k in lc for k in ["hora","horas","hh","estimado","estimacion","estimación","hours"]): hours_col = c
-    if name_col is None or hours_col is None:
-        if len(df.columns) >= 2: name_col, hours_col = df.columns[:2]
-        else: return pd.DataFrame(columns=["text","hours","ticket","source"])
-    out = df[[name_col, hours_col]].dropna()
-    out = out.rename(columns={name_col:"text", hours_col:"hours"})
-    out["hours"] = pd.to_numeric(out["hours"], errors="coerce")
-    out = out.dropna(subset=["hours"])
-    out["ticket"] = [f"CAT-{i}" for i in range(len(out))]
-    out["source"] = "catalog"
-    return out[["text","hours","ticket","source"]].reset_index(drop=True)
+        if any(h in lc for h in hints):
+            return c
+    return default
 
+def _coerce_float(x):
+    try:
+        v = float(x)
+        if pd.isna(v):
+            return None
+        return v
+    except Exception:
+        return None
+
+def _make_rows(df: pd.DataFrame, text_col: str, hours_col: Optional[str]=None,
+               ticket_col: Optional[str]=None, source: str="unknown") -> pd.DataFrame:
+    out = pd.DataFrame()
+    out["text"] = df[text_col].astype(str)
+    out["hours"] = df[hours_col].apply(_coerce_float) if (hours_col and hours_col in df.columns) else None
+    if ticket_col and ticket_col in df.columns:
+        out["ticket"] = df[ticket_col].astype(str)
+    else:
+        out["ticket"] = [f"{source[:3].upper()}-{i}" for i in range(len(df))]
+    out["source"] = source
+    out = out[out["text"].str.strip() != ""].reset_index(drop=True)
+    return out[["text","hours","ticket","source"]]
+
+# ---------- Carga de catálogos para estimate_from_catalog ----------
+def load_catalog(tipo: str):
+    """
+    Devuelve lista de (texto, horas) para 'Desarrollo' o 'Implementación'.
+    """
+    fname = CATALOGO_CESQ if tipo.lower().startswith("des") else CATALOGO_PSTC
+    if not fname.exists():
+        return []
+    df = pd.read_csv(fname, encoding="utf-8")
+    df = _normalize_cols(df)
+    tcol = _guess_col(df, _TEXT_HINTS) or df.columns[0]
+    hcol = _guess_col(df, _HOURS_HINTS) or (df.columns[1] if len(df.columns)>1 else None)
+    rows = []
+    for _, r in df.iterrows():
+        txt = str(r.get(tcol, "")).strip()
+        hrs = _coerce_float(r.get(hcol, None)) if hcol else None
+        if txt and (hrs is not None):
+            rows.append((txt, float(hrs)))
+    return rows
+
+# ---------- Loader principal: histórico + catálogo + nuevas ----------
 def load_labeled_dataframe(tag: str) -> pd.DataFrame:
-    ds = _dataset_path(tag)
-    if ds.exists():
-        try:
-            df = pd.read_csv(ds, encoding="utf-8")
-            req = [c for c in ["text","hours","ticket","source"] if c in df.columns]
-            if set(["text","hours"]).issubset(req):
-                if "ticket" not in df: df["ticket"] = [str(i) for i in range(len(df))]
-                if "source" not in df: df["source"] = "unknown"
-                return df[["text","hours","ticket","source"]].reset_index(drop=True)
-        except Exception:
-            pass
-    # fallback a catálogos (muy ligeros)
-    if tag == "desarrollo": df = _load_catalog(CATALOGO_CESQ)
-    elif tag == "implementacion": df = _load_catalog(CATALOGO_PSTC)
-    else: raise ValueError("tag inválido")
-    if "ticket" not in df: df["ticket"] = [str(i) for i in range(len(df))]
-    if "source" not in df: df["source"] = "unknown"
-    return df[["text","hours","ticket","source"]].reset_index(drop=True)
+    """
+    tag: 'desarrollo' | 'implementacion'
+    Combina: histórico (Jira export) + catálogo + nuevas confirmaciones.
+    Columnas: text, hours, ticket, source ('historic'|'catalog'|'new')
+    """
+    assert tag in ("desarrollo","implementacion")
+    frames = []
+
+    # 1) Histórico (Jira export)
+    hist_path = DATA_DIR / ("EstimacionCESQ.csv" if tag == "desarrollo" else "EstimacionesPSTC.csv")
+    if hist_path.exists():
+        dfh = pd.read_csv(hist_path, encoding="utf-8", low_memory=False)
+        dfh = _normalize_cols(dfh)
+        tcol = _guess_col(dfh, _TEXT_HINTS) or dfh.columns[0]
+        hcol = _guess_col(dfh, _HOURS_HINTS)
+        kcol = _guess_col(dfh, _TICKET_HINTS)
+        frames.append(_make_rows(dfh, tcol, hcol, kcol, source="historic"))
+
+    # 2) Catálogo base
+    cat_path = CATALOGO_CESQ if tag == "desarrollo" else CATALOGO_PSTC
+    if cat_path.exists():
+        dfc = pd.read_csv(cat_path, encoding="utf-8")
+        dfc = _normalize_cols(dfc)
+        tcol = _guess_col(dfc, _TEXT_HINTS) or dfc.columns[0]
+        hcol = _guess_col(dfc, _HOURS_HINTS) or (dfc.columns[1] if len(dfc.columns)>1 else None)
+        frames.append(_make_rows(dfc, tcol, hcol, None, source="catalog"))
+
+    # 3) Nuevas confirmaciones del usuario (acepta .csv o .cs)
+    new_path = NEW_EST_CSV if NEW_EST_CSV.exists() else (NEW_EST_CS if NEW_EST_CS.exists() else None)
+    if new_path:
+        dfn = pd.read_csv(new_path, encoding="utf-8")
+        dfn = _normalize_cols(dfn)
+        # filtra por tipo
+        if "tipo" in dfn.columns:
+            mask = dfn["tipo"].astype(str).str.lower().str.contains("desarrollo" if tag == "desarrollo" else "pstc")
+            dfn = dfn[mask]
+        if not dfn.empty:
+            tcol = "texto" if "texto" in dfn.columns else (_guess_col(dfn, _TEXT_HINTS) or dfn.columns[0])
+            if "estimacion_final" in dfn.columns:
+                hcol = "estimacion_final"
+            elif "horas_reales" in dfn.columns:
+                hcol = "horas_reales"
+            else:
+                hcol = _guess_col(dfn, _HOURS_HINTS)
+            frames.append(_make_rows(dfn, tcol, hcol, None, source="new"))
+
+    if not frames:
+        # sin nada, devuelve DF vacío (evita reventar)
+        return pd.DataFrame(columns=["text","hours","ticket","source"])
+
+    df = pd.concat(frames, ignore_index=True)
+    # limpia duplicados triviales
+    df = df.dropna(subset=["text"]).reset_index(drop=True)
+    return df[["text","hours","ticket","source"]]
 
 # ---------- Estimator (API esperada por app.py) ----------
 class EmbeddingsFaissEstimator:
@@ -121,7 +201,8 @@ class EmbeddingsFaissEstimator:
 
     def fit(self, texts: List[str], hours: List[float]):
         embs = _embed_texts(texts)
-        if embs.size == 0: raise ValueError("Corpus vacío")
+        if embs.size == 0:
+            raise ValueError("Corpus vacío")
         dim = embs.shape[1]
         idx = faiss.IndexFlatIP(dim)  # cosine gracias a normalize_embeddings=True
         idx.add(embs)
@@ -129,12 +210,14 @@ class EmbeddingsFaissEstimator:
         self.hours = list(map(float, hours))
 
     def save(self):
-        if self.index is None or self.hours is None: return
+        if self.index is None or self.hours is None:
+            return
         _save_index(self.index, self.tag, self.hours)
 
     def load(self) -> bool:
         idx, hrs = _load_index(self.tag)
-        if idx is None: return False
+        if idx is None:
+            return False
         self.index, self.hours = idx, hrs
         return True
 
@@ -146,48 +229,49 @@ class EmbeddingsFaissEstimator:
         sims = D[0].tolist(); idxs = I[0].tolist()
         neigh = []
         for i, s in zip(idxs, sims):
-            if i == -1: continue
+            if i == -1:
+                continue
             neigh.append((int(i), float(s), float(self.hours[i])))
-        total = sum(s for _,s,_ in neigh) or 1.0
-        est = sum(h*s for _,s,h in neigh)/total if neigh else 0.0
+        total = sum(s for _, s, _ in neigh) or 1.0
+        est = sum(h * s for _, s, h in neigh) / total if neigh else 0.0
         return est, neigh
 
 # ---------- Orquestación de entrenamiento ----------
 def _build_from_frame(tag: str, df: pd.DataFrame) -> int:
-    if df.empty: return 0
+    if df.empty:
+        # guarda dataset vacío para trazabilidad
+        df[["text","hours","ticket","source"]].to_csv(_dataset_path(tag), index=False, encoding="utf-8")
+        return 0
     est = EmbeddingsFaissEstimator(tag)
-    est.fit(df["text"].astype(str).tolist(), df["hours"].astype(float).tolist())
+    # hours NaN -> 0 para compat con fit; predict y la UI pueden mostrar '—'
+    hours = [float(h) if h is not None and not pd.isna(h) else 0.0 for h in df["hours"].tolist()]
+    est.fit(df["text"].astype(str).tolist(), hours)
     est.save()
-    # Persistimos dataset para la UI
+    # Persistimos dataset para la UI (para mapear idx -> fila)
     df[["text","hours","ticket","source"]].to_csv(_dataset_path(tag), index=False, encoding="utf-8")
     return len(df)
 
-def train_index_per_type(full: bool=False) -> Dict[str,int]:
+def train_index_per_type(full: bool=False) -> Dict[str, int]:
     """
-    Render-safe:
-      - Si LAZY_BOOT=1 (default) y full=False: NO hace training pesado en el boot.
-        * Intenta cargar índices existentes.
-        * Si no existen, construye índices mínimos desde catálogos (ligeros).
-      - Con full=True: fuerza construir desde datasets (si existen).
+    Si full=True: reconstruye SIEMPRE desde (historic+catalog+new).
+    Si full=False y LAZY_BOOT=1: intenta cargar índices; si no existen, crea mínimos.
     """
-    counts = {"desarrollo":0,"implementacion":0}
+    counts = {"desarrollo": 0, "implementacion": 0}
     lazy = LAZY_BOOT and not full
 
-    if lazy:
-        idx, hrs = _load_index("desarrollo")
-        counts["desarrollo"] = len(hrs) if hrs else _build_from_frame("desarrollo", load_labeled_dataframe("desarrollo"))
-    else:
-        counts["desarrollo"] = _build_from_frame("desarrollo", load_labeled_dataframe("desarrollo"))
-
-    if lazy:
-        idx, hrs = _load_index("implementacion")
-        counts["implementacion"] = len(hrs) if hrs else _build_from_frame("implementacion", load_labeled_dataframe("implementacion"))
-    else:
-        counts["implementacion"] = _build_from_frame("implementacion", load_labeled_dataframe("implementacion"))
+    for tag in ["desarrollo", "implementacion"]:
+        if lazy:
+            idx, hrs = _load_index(tag)
+            if idx is not None and hrs is not None:
+                counts[tag] = len(hrs)
+                continue
+        # full o no había índice: construye desde DF combinado
+        df = load_labeled_dataframe(tag)
+        counts[tag] = _build_from_frame(tag, df)
 
     return counts
 
-
+# ---------- Estimación por catálogo (token overlap) ----------
 def _tokens(s: str):
     return set([t for t in re.findall(r"[a-záéíóúñ]+", (s or "").lower()) if len(t) >= 3])
 
@@ -214,15 +298,10 @@ def estimate_from_catalog(texto: str, tipo: str, top_n: int = 3, min_cover: floa
         inter = len(qtoks & ktoks)
         cover = inter / max(1, len(ktoks))
         if cover >= min_cover:
-            try:
-                hnum = float(h or 0.0)
-            except Exception:
-                hnum = 0.0
+            hnum = float(h or 0.0)
             if hnum > 0:
                 scored.append((cover, hnum, key))
 
-    # Ordena por cobertura desc y toma top_n
     scored.sort(key=lambda x: x[0], reverse=True)
     total = sum(h for _, h, _ in scored[:max(1, int(top_n))])
     return round(float(total), 2)
-
