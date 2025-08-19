@@ -2,11 +2,39 @@ services:
   - type: web
     name: ia-estimador
     env: python
-    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    buildCommand: |
+      pip install --upgrade pip && pip install -r requirements.txt
     startCommand: gunicorn -k gthread -w 1 --threads 1 -t 300 -b 0.0.0.0:$PORT app:app
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.12
+
+      # ↓↓↓ Cache de modelos HuggingFace en disco persistente de Render
       - key: HF_HOME
         value: /var/data/hf_cache
 
+      # ↓↓↓ Modelo más liviano por defecto (menos RAM que all-MiniLM-L6-v2)
+      - key: EMB_MODEL
+        value: sentence-transformers/paraphrase-MiniLM-L3-v2
+
+      # ↓↓↓ Limitar paralelismo (reduce picos de memoria CPU/BLAS/FAISS)
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
+      - key: NUMEXPR_NUM_THREADS
+        value: "1"
+      - key: TOKENIZERS_PARALLELISM
+        value: "false"
+      - key: FAISS_NUM_THREADS
+        value: "1"
+
+      # ↓↓↓ Cotas de encode (ajustables si aún estás justo)
+      - key: MAX_SEQ_LEN
+        value: "256"   # baja a 128 si sigue apretado
+      - key: EMB_BATCH
+        value: "8"     # baja a 4 o 2 si sigue apretado
+
+      # ↓↓↓ Por si Render intenta autoescalar workers
+      - key: WEB_CONCURRENCY
+        value: "1"
