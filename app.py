@@ -10,20 +10,20 @@ from estimator import (
     load_labeled_dataframe,
 )
 
-# ⬇️ filtro hfmt
+# ⬇️ Filtro hfmt
 from hfmt_filter import register_jinja_filters, _hfmt
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "dev-secret")
 
-# ⬇️ registro a prueba de balas del filtro
+# ⬇️ Registro del filtro (idempotente y a prueba de recompilaciones)
 register_jinja_filters(app)
 app.add_template_filter(_hfmt, name="hfmt")
 
 @app.before_request
 def _ensure_hfmt():
-    if 'hfmt' not in app.jinja_env.filters:
-        app.add_template_filter(_hfmt, name='hfmt')
+    if "hfmt" not in app.jinja_env.filters:
+        app.add_template_filter(_hfmt, name="hfmt")
 
 
 # -------------------------
@@ -41,26 +41,29 @@ def _neighbor_based_cost_per_field(neighbors, labeled_df) -> float:
     for idx, sim, h in neighbors:
         if idx is None or idx < 0 or idx >= len(labeled_df):
             continue
-        t = labeled_df.loc[idx, "text"]
+        t = str(labeled_df.loc[idx, "text"])
         n = _extract_field_count(t)
         if n > 0:
-            numer += float(h)
-            denom += float(n)
+            try:
+                numer += float(h)
+                denom += float(n)
+            except Exception:
+                pass
     if denom > 0:
         return numer / denom
-    return 0.35  # fallback: 0.35 h/campo
+    return 0.35  # fallback
 
 
 def _estimate_with_softmax(neighbors, temperature=0.20):
     """Softmax(sim/temperature): más frío => más peso al top1."""
     if not neighbors:
         return 0.0, []
-    sims = [max(0.0, s) for _, s, _ in neighbors]
-    exps = [math.exp(s/temperature) for s in sims]
+    sims = [max(0.0, float(s)) for _, s, _ in neighbors]
+    exps = [math.exp(s / temperature) for s in sims]
     Z = sum(exps) or 1.0
-    weights = [e/Z for e in exps]
-    hours = [h for _, _, h in neighbors]
-    estimate = sum(w*h for w, h in zip(weights, hours))
+    weights = [e / Z for e in exps]
+    hours = [float(h) for _, _, h in neighbors]
+    estimate = sum(w * h for w, h in zip(weights, hours))
     return estimate, weights
 
 
@@ -72,7 +75,7 @@ def _filter_neighbors_by_source(neighbors, labeled_df, origen):
     for idx, sim, h in neighbors:
         if idx is None or idx < 0 or idx >= len(labeled_df):
             continue
-        src = labeled_df.loc[idx].get("source", "unknown")
+        src = str(labeled_df.loc[idx].get("source", "unknown"))
         if src == origen:
             keep.append((idx, sim, h))
     return keep
@@ -86,7 +89,7 @@ def _status_obj():
         emb_enabled = True
     except Exception:
         emb_enabled = False
-    # conteo KB
+    # conteo KB (puede ser costoso; mantenlo si lo necesitas en UI)
     kb_count = 0
     try:
         kb_count += len(load_labeled_dataframe("desarrollo"))
@@ -99,9 +102,13 @@ def _status_obj():
     return type("Obj", (), {"emb_enabled": emb_enabled, "kb_count": kb_count})
 
 
-# Entrenar índices al iniciar (histórico + catálogos + nuevas)
+# -------------------------
+# Entrenamiento al iniciar
+# -------------------------
 try:
-    counts = train_index_per_type()
+    # Permite forzar entrenamiento completo en boot con TRAIN_FULL_ON_BOOT=1
+    boot_full = os.environ.get("TRAIN_FULL_ON_BOOT", "0") == "1"
+    counts = train_index_per_type(full=boot_full)
     print(
         f"Índices entrenados. "
         f"Desarrollo={counts.get('desarrollo',0)}, "
@@ -120,7 +127,14 @@ def index():
     estimate_top1 = None
     neighbors = []
     debug_info = {}
-    form = {"tipo": "desarrollo", "texto": "", "metodo": "softmax", "origen": "todos"}
+
+    # Valores por defecto del form (alineado con tu template)
+    form = {
+        "tipo": "desarrollo",     # 'desarrollo' | 'implementacion'
+        "texto": "",
+        "metodo": "softmax",      # 'softmax' | 'top1'
+        "origen": "todos",        # 'todos' | 'historic' | 'catalog' | 'new'
+    }
 
     if request.method == "POST":
         accion = request.form.get("accion", "estimar")
@@ -131,13 +145,16 @@ def index():
 
         tag = "desarrollo" if form["tipo"] == "desarrollo" else "implementacion"
 
-        # Cargar índice (si falla, reentrena una vez)
+        # Cargar índice (si falla, reentrena full=True y reintenta)
         est = EmbeddingsFaissEstimator(tag)
+        loaded = False
         try:
-            est.load()
+            loaded = est.load()
         except Exception:
+            loaded = False
+        if not loaded:
             try:
-                train_index_per_type()
+                train_index_per_type(full=True)  # <— fuerza incluir histórico + catálogo + nuevos
                 est.load()
             except Exception as e2:
                 return (f"No se pudo cargar/entrenar el índice [{tag}]: {e2}", 500)
@@ -159,7 +176,7 @@ def index():
 
             def to_float(x):
                 try:
-                    return float(x) if x not in (None, "", "-") else None
+                    return float(x) if x not in (None, "", "-", "—") else None
                 except Exception:
                     return None
 
@@ -167,9 +184,9 @@ def index():
             out.parent.mkdir(parents=True, exist_ok=True)
             row = {
                 "fecha": dt.datetime.now().isoformat(timespec="seconds"),
-                "tipo": form["tipo"],                # CESQ (desarrollo) o PSTC (implementación)
+                "tipo": form["tipo"],                # desarrollo | implementacion
                 "texto": form["texto"],
-                "metodo_usado": metodo_usado,        # softmax o top1
+                "metodo_usado": metodo_usado,        # softmax | top1
                 "estimacion_ia": to_float(estimacion_ia),
                 "estimacion_top1": to_float(estimacion_top1),
                 "estimacion_final": to_float(estimacion_final),
@@ -188,28 +205,28 @@ def index():
         labeled = load_labeled_dataframe(tag).reset_index(drop=True)
 
         # Conteo por origen (antes de filtrar)
-        counts_all = {"historic":0, "catalog":0, "new":0, "unknown":0}
+        counts_all = {"historic": 0, "catalog": 0, "new": 0, "unknown": 0}
         rows_all = []
-        for (i,s,h) in neighbors_all:
+        for (i, s, h) in neighbors_all:
             if i is None or i < 0 or i >= len(labeled):
                 continue
-            src_i = labeled.loc[i].get("source","unknown")
-            counts_all[src_i] = counts_all.get(src_i,0)+1
+            src_i = str(labeled.loc[i].get("source", "unknown"))
+            counts_all[src_i] = counts_all.get(src_i, 0) + 1
             rows_all.append({
                 "idx": int(i),
-                "sim": float(round(s,4)),
-                "hours": float(round(h,4)),
-                "ticket": str(labeled.loc[i].get("ticket","?")),
+                "sim": float(round(s, 4)),
+                "hours": float(round(h, 4)),
+                "ticket": str(labeled.loc[i].get("ticket", "?")),
                 "source": src_i,
-                "text": str(labeled.loc[i].get("text",""))[:180]
+                "text": str(labeled.loc[i].get("text", ""))[:180]
             })
 
         # Aplicar filtro de origen a los vecinos usados
         neighbors = _filter_neighbors_by_source(neighbors_all, labeled, form.get("origen", "todos"))
         debug_info = {
             "tipo": tag,
-            "texto": form.get("texto",""),
-            "origen": form.get("origen","todos"),
+            "texto": form.get("texto", ""),
+            "origen": form.get("origen", "todos"),
             "k_all": len(neighbors_all),
             "k_used": len(neighbors),
             "counts_all": counts_all,
@@ -220,7 +237,7 @@ def index():
             # Top1: si origen=todos, preferir histórico en casi-empate
             if form.get("metodo") == "top1" and form.get("origen", "todos") == "todos":
                 best_idx, best_sim, best_h = max(neighbors, key=lambda t: t[1])
-                hist_candidates = [(i,s,h) for (i,s,h) in neighbors if labeled.loc[i].get("source","?")=="historic"]
+                hist_candidates = [(i, s, h) for (i, s, h) in neighbors if str(labeled.loc[i].get("source", "?")) == "historic"]
                 if hist_candidates:
                     h_idx, h_sim, h_h = max(hist_candidates, key=lambda t: t[1])
                     estimate_top1 = h_h if (best_sim - h_sim) <= 0.02 else best_h
@@ -242,7 +259,7 @@ def index():
         N = _extract_field_count(form["texto"])
         if N > 0:
             cpf = _neighbor_based_cost_per_field(neighbors, labeled)
-            alpha = 0.3  # 30% método elegido + 70% costo_por_campo
+            alpha = 0.3  # mezcla: 30% método elegido + 70% costo_por_campo
             base = alpha * float(estimate or 0.0) + (1.0 - alpha) * (cpf * N)
             min_per_field = 0.25
             estimate = max(base, N * min_per_field)
@@ -268,7 +285,7 @@ def index():
                 "source": src,
             })
 
-    # ⬇️ Compat con plantillas que esperan otras variables
+    # Contexto para template (incluye alias para compatibilidad)
     ctx = dict(
         form=form,
         estimate=estimate,
@@ -276,11 +293,11 @@ def index():
         neighbors=neighbors,
         examples=examples,
         debug_info=debug_info,
-        status=_status_obj(),       # <— evita 'status is undefined'
+        status=_status_obj(),
         kb_hits=examples,           # alias para plantillas antiguas
         top_k=len(examples) or 0,
-        estimate_catalog=0.0,       # seguro si el template lo muestra
-        estimate_semantic=None,     # seguro si el template lo muestra
+        estimate_catalog=0.0,       # alias seguros
+        estimate_semantic=None,
         w_catalog=0.5,
         w_semantic=0.5,
     )
@@ -290,7 +307,7 @@ def index():
 @app.route("/retrain", methods=["POST"])
 def retrain():
     try:
-        counts = train_index_per_type()
+        counts = train_index_per_type(full=True)  # <— fuerza rebuild con histórico+catálogo+nuevos
         msg = (f"Reentrenado. Desarrollo={counts.get('desarrollo',0)}, "
                f"Implementación={counts.get('implementacion',0)}")
         flash(msg, "ok")
@@ -310,5 +327,5 @@ except Exception:
 
 
 if __name__ == "__main__":
-    # En Render usarás gunicorn app:app; esto es para ejecución local
+    # En Render usarás: gunicorn -k gthread -w 1 --threads 2 -t 300 -b 0.0.0.0:$PORT app:app
     app.run(host="0.0.0.0", port=7860, debug=True)
