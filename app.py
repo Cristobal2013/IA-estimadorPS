@@ -12,8 +12,31 @@ from estimator import (
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "dev-secret")
-from hfmt_filter import register_jinja_filters
-register_jinja_filters(app)
+
+# --- Global status for templates (ensures `status` is always defined) ---
+@app.context_processor
+def inject_status():
+    emb_model = os.environ.get("EMB_MODEL", "sentence-transformers/paraphrase-MiniLM-L3-v2")
+    return dict(status={
+        "emb_enabled": True,
+        "kb_count": 0,
+        "emb": True,
+        "emb_model": emb_model,
+    })
+
+
+# --- Jinja filter: format hours ---
+@app.template_filter("hfmt")
+def hfmt(value):
+    try:
+        v = float(value)
+        if abs(v - round(v)) < 1e-9:
+            return str(int(round(v)))
+        return f"{v:.2f}".rstrip("0").rstrip(".")
+    except Exception:
+        return value
+
+
 
 # -------------------------
 # Helpers
@@ -261,32 +284,3 @@ def retrain():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=7860, debug=True)
-
-
-# --- Minimal upload endpoint to match template's url_for('upload_route') ---
-try:
-    if "upload_route" not in app.view_functions:
-        from werkzeug.utils import secure_filename
-        from flask import request, redirect, url_for, flash
-        from pathlib import Path as _Path
-        import os as _os
-
-        @app.route("/upload", methods=["POST"], endpoint="upload_route")
-        def upload_route():
-            try:
-                file = request.files.get("file")
-                if file is None or file.filename == "":
-                    flash("Selecciona un CSV para subir.", "err")
-                    return redirect(url_for("index"))
-                fname = secure_filename(file.filename)
-                base_dir = _Path(_os.environ.get("DATA_DIR", str(_Path(__file__).parent / "data")))
-                upload_dir = base_dir / "uploads"
-                upload_dir.mkdir(parents=True, exist_ok=True)
-                dest = upload_dir / fname
-                file.save(dest)
-                flash(f"CSV subido: {fname}", "ok")
-            except Exception as e:
-                flash(f"Error al subir CSV: {e}", "err")
-            return redirect(url_for("index"))
-except Exception:
-    pass
