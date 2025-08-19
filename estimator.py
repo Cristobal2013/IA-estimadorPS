@@ -1,182 +1,76 @@
 
-# estimator.py — patched for Render (<=512MB) and API-compatible with app.py
-# Public API kept: EmbeddingsFaissEstimator(tag), train_index_per_type(), load_labeled_dataframe(tag)
-# Key changes:
-#  - Singleton SentenceTransformer on CPU
-#  - Smaller default model + shorter seq length + small batch
-#  - Single-threaded BLAS/FAISS/tokenizers
-#  - Uses HF_HOME for cache (avoid /tmp churn)
-#  - Avoid re-instantiating model on every call
-
-from __future__ import annotations
 import os, re, json, glob
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
 
-# ---------- Memory limits & cache ----------
+import numpy as np
+import pandas as pd
+import faiss
+from sentence_transformers import SentenceTransformer
+
+# ---------- Env & memory knobs ----------
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("FAISS_NUM_THREADS", "1")
-os.environ.setdefault("HF_HOME", str(Path(os.environ.get("DATA_DIR", "./data")) / "models" / "hf_cache"))
 
-import numpy as np
-import pandas as pd
-import faiss
-
-# Delay torch import side-effects if present
-try:
-    import torch  # type: ignore
-    torch.set_num_threads(1)
-    torch.set_grad_enabled(False)
-except Exception:
-    torch = None  # type: ignore
-
-# SentenceTransformer (lazy-singleton below)
-from sentence_transformers import SentenceTransformer
-
-# =========================
-# Configuración de rutas
-# =========================
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(Path(__file__).parent / "data")))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+INDEX_DIR = DATA_DIR / "faiss"; INDEX_DIR.mkdir(parents=True, exist_ok=True)
 MODEL_DIR = DATA_DIR / "models"; MODEL_DIR.mkdir(parents=True, exist_ok=True)
-INDEX_DIR = DATA_DIR / "faiss" ; INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
-# Model & encode params (lighter than all-MiniLM-L6-v2)
-MODEL_NAME  = os.environ.get("EMB_MODEL", "sentence-transformers/paraphrase-MiniLM-L3-v2")
-MAX_SEQ_LEN = int(os.environ.get("MAX_SEQ_LEN", "256"))   # use 128 if still OOM
-BATCH_SIZE  = int(os.environ.get("EMB_BATCH", "8"))       # use 4 or 2 if still OOM
+# cache HF persistente
+os.environ.setdefault("HF_HOME", str(MODEL_DIR / "hf_cache"))
 
-NEW_EST_PATH   = DATA_DIR / "estimaciones_nuevas.csv"
 CATALOGO_CESQ  = DATA_DIR / "catalogo_cesq.csv"
 CATALOGO_PSTC  = DATA_DIR / "catalogo_pstc.csv"
+NEW_EST_PATH   = DATA_DIR / "estimaciones_nuevas.csv"
 
-def _dataset_csv_path(tag: str) -> Path:
-    assert tag in ("desarrollo", "implementacion")
-    return INDEX_DIR / f"faiss_{tag}_dataset.csv"
+MODEL_NAME  = os.environ.get("EMB_MODEL", "sentence-transformers/paraphrase-MiniLM-L3-v2")
+MAX_SEQ_LEN = int(os.environ.get("MAX_SEQ_LEN", "256"))
+EMB_BATCH   = int(os.environ.get("EMB_BATCH", "8"))
+LAZY_BOOT   = os.environ.get("LAZY_BOOT", "1") == "1"  # evita entrenamientos pesados al arranque
 
-# =========================
-# Ubicar CSV históricos
-# =========================
-def _find_csv(pattern: str) -> Path:
-    candidates = []
-    candidates.extend(sorted(glob.glob(str(DATA_DIR / pattern))))
-    candidates.extend(sorted(glob.glob(str(Path(__file__).parent / pattern))))
-    if not candidates:
-        raise FileNotFoundError(f"No se encontró CSV con patrón: {pattern}")
-    return Path(candidates[0])
+# ---------- Embeddings (singleton) ----------
+_MODEL: Optional[SentenceTransformer] = None
+def _get_model() -> SentenceTransformer:
+    global _MODEL
+    if _MODEL is None:
+        _MODEL = SentenceTransformer(MODEL_NAME, device="cpu")
+        try: _MODEL.max_seq_length = MAX_SEQ_LEN
+        except Exception: pass
+    return _MODEL
 
-def _cesq_path() -> Path: return _find_csv("*CESQ*.csv")
-def _pstc_path() -> Path: return _find_csv("*PSTC*.csv")
+def _embed_texts(texts: List[str]) -> np.ndarray:
+    if not texts: return np.zeros((0,0), dtype="float32")
+    m = _get_model()
+    embs = m.encode(
+        texts, batch_size=EMB_BATCH, show_progress_bar=False,
+        normalize_embeddings=True, convert_to_numpy=True
+    )
+    return np.asarray(embs, dtype="float32")
 
-# =========================
-# Normalización / Ticket
-# =========================
+# ---------- FAISS helpers ----------
+def _index_path(tag: str) -> Path: return INDEX_DIR / f"faiss_{tag}.index"
+def _hours_path(tag: str) -> Path: return INDEX_DIR / f"faiss_{tag}_hours.json"
+def _dataset_path(tag: str) -> Path: return INDEX_DIR / f"faiss_{tag}_dataset.csv"
+
+def _save_index(index, tag: str, hours: List[float]):
+    faiss.write_index(index, str(_index_path(tag)))
+    Path(_hours_path(tag)).write_text(json.dumps(hours, ensure_ascii=False))
+
+def _load_index(tag: str):
+    ip = _index_path(tag); hp = _hours_path(tag)
+    if not (ip.exists() and hp.exists()): return None, None
+    idx = faiss.read_index(str(ip))
+    hrs = json.loads(Path(hp).read_text())
+    return idx, hrs
+
+# ---------- CSV utils (livianos) ----------
 def _normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
-    def clean(s: str) -> str: return str(s).replace("\ufeff", "").strip()
+    def clean(s: str) -> str: return str(s).replace("\ufeff","").strip()
     out = df.copy(); out.columns = [clean(c) for c in out.columns]; return out
-
-def _pick_ticket_column(df: pd.DataFrame) -> Optional[str]:
-    norm_map = {c.lower().replace(" ", ""): c for c in df.columns}
-    for k in ["key","issuekey","issue key","id","ticket","número","numero","nro","n°"]:
-        if k in norm_map: return norm_map[k]
-    for c in df.columns:
-        series = df[c].astype(str)
-        if series.str.contains(r"\b(?:CESQ|PSTC)-\d+\b", regex=True).any(): return c
-    return None
-
-# =========================
-# Horas desde Comments
-# =========================
-def _extract_hours_from_comments_row(row) -> Optional[float]:
-    comment_cols = [c for c in row.index if str(c).startswith("Comments")]
-    texts = [str(row[c]) for c in comment_cols if isinstance(row.get(c), str)]
-    blob = "\n".join(texts) if texts else ""
-    m = re.search(r"(?mi)^\s*\|?\s*\*?total\*?\s*\|\s*\*?(\d+(?:[.,]\d+)?)\*?\s*\|?", blob)
-    if m: return float(m.group(1).replace(",", "."))
-    if re.search(r"(?mi)^\s*\|.*\bHH\b.*\|", blob):
-        total, any_row = 0.0, False
-        for line in blob.splitlines():
-            mrow = re.match(r"^\s*\|.*?\|\s*\*?(\d+(?:[.,]\d+)?)\*?\|\s*$", line)
-            if mrow and not re.search(r"(?i)\b(total|actividad|hh)\b", line):
-                any_row = True; total += float(mrow.group(1).replace(",", "."))
-        if any_row and total > 0: return total
-    low = blob.lower()
-    m = re.search(r"total\W*(\d+(?:[.,]\d+)?)\s*h\b", low)
-    if m: return float(m.group(1).replace(",", "."))
-    matches_h = re.findall(r"(?<!\d)(\d+(?:[.,]\d+)?)\s*h\b", low)
-    if matches_h: return sum(float(x.replace(",", ".")) for x in matches_h)
-    matches_u = re.findall(r"(\d+(?:[.,]\d+)?)\s*(?:horas|hora|hrs|hr|hh)\b", low)
-    if matches_u: return sum(float(x.replace(",", ".")) for x in matches_u)
-    m = re.findall(r"(\d+):(\d{1,2})", low)
-    if m: return sum(int(h) + int(mm) / 60.0 for h, mm in m)
-    m = re.findall(r"(\d+(?:[.,]\d+)?)\s*min\b", low)
-    if m: return sum(float(x.replace(",", ".")) / 60.0 for x in m)
-    return None
-
-def _build_text(df: pd.DataFrame) -> pd.Series:
-    pref = [c for c in ["Summary","Descripción","Descripcion","Description","Issue Type","Tipo","Tipo de incidencia"] if c in df.columns]
-    if pref: return df[pref].astype(str).agg(" . ".join, axis=1)
-    obj_cols = [c for c in df.columns if df[c].dtype == object]
-    if not obj_cols:
-        cand = df.columns[:3].tolist(); return df[cand].astype(str).agg(" . ".join, axis=1)
-    lengths = {c: df[c].astype(str).str.len().mean() for c in obj_cols}
-    top = sorted(lengths, key=lengths.get, reverse=True)[:3]
-    return df[top].astype(str).agg(" . ".join, axis=1)
-
-# =========================
-# Carga de datasets
-# =========================
-def _load_and_label_historic(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path, encoding="utf-8", sep=None, engine="python")
-    df = _normalize_cols(df)
-    hours_from_comments = df.apply(_extract_hours_from_comments_row, axis=1)
-    candidates = [c for c in df.columns if str(c).lower() in [
-        "horas","hh","tiempo","time spent","Σ time spent","sum of time spent","logged hours",
-        "tiemposumado","tiempoint","tiempoinvertido","esfuerzo","original estimate",
-        "remaining estimate","estimate","estimado","estimacion","estimación"
-    ] or ("hora" in str(c).lower()) or ("time" in str(c).lower() and "spent" in str(c).lower())]
-    hours_explicit = None
-    def _parse(v):
-        s = str(v).strip().lower().replace(",", ".")
-        if not s or s in ("nan","none"): return None
-        m = re.match(r"^(\d+):(\d{1,2})$", s)
-        if m: return int(m.group(1)) + int(m.group(2)) / 60.0
-        m = re.match(r"^(\d+(?:\.\d+)?)\s*min", s)
-        if m: return float(m.group(1)) / 60.0
-        m = re.match(r"^(\d+(?:\.\d+)?)(?:\s*h|\s*hh)?$", s)
-        if m: return float(m.group(1))
-        return None
-    for c in candidates:
-        parsed = df[c].map(_parse)
-        if parsed.notna().sum() > 0: hours_explicit = parsed; break
-    df["hours"] = hours_from_comments.fillna(hours_explicit) if hours_explicit is not None else hours_from_comments
-    df["text"] = _build_text(df)
-    tcol = _pick_ticket_column(df)
-    df["ticket"] = df[tcol].astype(str) if tcol and tcol in df.columns else df.index.astype(str)
-    df = df.dropna(subset=["hours"])[["text","hours","ticket"]].reset_index(drop=True)
-    df["source"] = "historic"; return df
-
-def _load_new_estimations(tag: str) -> pd.DataFrame:
-    if not NEW_EST_PATH.exists(): return pd.DataFrame(columns=["text","hours","ticket","source"])
-    df = pd.read_csv(NEW_EST_PATH, encoding="utf-8"); df = _normalize_cols(df)
-    if "tipo" not in df.columns or "texto" not in df.columns: return pd.DataFrame(columns=["text","hours","ticket","source"])
-    df["tipo"] = df["tipo"].astype(str).str.lower().map({
-        "desarrollo":"desarrollo","implementacion":"implementacion","implementación":"implementacion",
-        "impl":"implementacion","dev":"desarrollo","cesq":"desarrollo","pstc":"implementacion",
-    })
-    df = df[df["tipo"] == tag].copy()
-    if df.empty: return pd.DataFrame(columns=["text","hours","ticket","source"])
-    for col in ["horas_reales","estimacion_final","estimacion_ia"]:
-        if col not in df.columns: df[col] = np.nan
-    df["hours"] = df["horas_reales"].fillna(df["estimacion_final"]).fillna(df["estimacion_ia"])
-    df = df.dropna(subset=["hours","texto"]).copy()
-    df = df[df["hours"].astype(float) > 0]
-    df["ticket"] = [f"NEW-{i}" for i in range(len(df))]
-    df = df.rename(columns={"texto":"text"})
-    df = df[["text","hours","ticket"]].reset_index(drop=True); df["source"] = "new"; return df
 
 def _load_catalog(path: Path) -> pd.DataFrame:
     if not path.exists(): return pd.DataFrame(columns=["text","hours","ticket","source"])
@@ -184,170 +78,111 @@ def _load_catalog(path: Path) -> pd.DataFrame:
     name_col, hours_col = None, None
     for c in df.columns:
         lc = str(c).lower()
-        if name_col is None and any(k in lc for k in ["tarea","nombre","descripción","descripcion","actividad"]): name_col = c
-        if hours_col is None and any(k in lc for k in ["hora","horas","hh","estimado","estimacion","estimación"]): hours_col = c
+        if name_col is None and any(k in lc for k in ["tarea","nombre","descripción","descripcion","actividad","text","nombre tarea"]): name_col = c
+        if hours_col is None and any(k in lc for k in ["hora","horas","hh","estimado","estimacion","estimación","hours"]): hours_col = c
     if name_col is None or hours_col is None:
         if len(df.columns) >= 2: name_col, hours_col = df.columns[:2]
         else: return pd.DataFrame(columns=["text","hours","ticket","source"])
     out = df[[name_col, hours_col]].dropna()
     out = out.rename(columns={name_col:"text", hours_col:"hours"})
-    out["hours"] = pd.to_numeric(out["hours"], errors="coerce"); out = out.dropna(subset=["hours"])
+    out["hours"] = pd.to_numeric(out["hours"], errors="coerce")
+    out = out.dropna(subset=["hours"])
     out["ticket"] = [f"CAT-{i}" for i in range(len(out))]
-    out["text"] = out["text"].astype(str)
-    out = out[["text","hours","ticket"]].reset_index(drop=True); out["source"] = "catalog"; return out
+    out["source"] = "catalog"
+    return out[["text","hours","ticket","source"]].reset_index(drop=True)
 
-# =========================
-# Embeddings + FAISS (singleton model)
-# =========================
-_MODEL: Optional[SentenceTransformer] = None
-
-def _get_model() -> SentenceTransformer:
-    global _MODEL
-    if _MODEL is None:
-        _MODEL = SentenceTransformer(MODEL_NAME, device="cpu")
+def load_labeled_dataframe(tag: str) -> pd.DataFrame:
+    ds = _dataset_path(tag)
+    if ds.exists():
         try:
-            _MODEL.max_seq_length = MAX_SEQ_LEN
+            df = pd.read_csv(ds, encoding="utf-8")
+            req = [c for c in ["text","hours","ticket","source"] if c in df.columns]
+            if set(["text","hours"]).issubset(req):
+                if "ticket" not in df: df["ticket"] = [str(i) for i in range(len(df))]
+                if "source" not in df: df["source"] = "unknown"
+                return df[["text","hours","ticket","source"]].reset_index(drop=True)
         except Exception:
             pass
-    return _MODEL
+    # fallback a catálogos (muy ligeros)
+    if tag == "desarrollo": df = _load_catalog(CATALOGO_CESQ)
+    elif tag == "implementacion": df = _load_catalog(CATALOGO_PSTC)
+    else: raise ValueError("tag inválido")
+    if "ticket" not in df: df["ticket"] = [str(i) for i in range(len(df))]
+    if "source" not in df: df["source"] = "unknown"
+    return df[["text","hours","ticket","source"]].reset_index(drop=True)
 
-def _embed_texts(texts: List[str]) -> np.ndarray:
-    if not texts: return np.zeros((0, 0), dtype="float32")
-    model = _get_model()
-    emb = model.encode(
-        texts,
-        batch_size=BATCH_SIZE,
-        show_progress_bar=False,
-        normalize_embeddings=True,
-        convert_to_numpy=True,
-    )
-    return np.asarray(emb, dtype="float32")
-
-def _save_faiss(index, path: Path): faiss.write_index(index, str(path))
-def _load_faiss(path: Path): return faiss.read_index(str(path))
-
+# ---------- Estimator (API esperada por app.py) ----------
 class EmbeddingsFaissEstimator:
     def __init__(self, tag: str):
-        assert tag in ("desarrollo", "implementacion")
+        assert tag in ("desarrollo","implementacion")
         self.tag = tag
         self.index = None
         self.hours = None
 
-    def _paths(self) -> Dict[str, Path]:
-        stem = f"faiss_{self.tag}"
-        return {
-            "index": INDEX_DIR / f"{stem}.index",
-            "hours": INDEX_DIR / f"{stem}_hours.json",
-            "meta":  INDEX_DIR / f"{stem}_meta.json",
-        }
-
     def fit(self, texts: List[str], hours: List[float]):
-        emb = _embed_texts(texts)
-        if emb.size == 0:
-            raise ValueError("No hay textos para entrenar")
-        dim = emb.shape[1]
-        index = faiss.IndexFlatIP(dim)  # cosine via normalized inner product
-        index.add(emb)
-        self.index = index
+        embs = _embed_texts(texts)
+        if embs.size == 0: raise ValueError("Corpus vacío")
+        dim = embs.shape[1]
+        idx = faiss.IndexFlatIP(dim)  # cosine gracias a normalize_embeddings=True
+        idx.add(embs)
+        self.index = idx
         self.hours = list(map(float, hours))
 
     def save(self):
-        p = self._paths()
-        _save_faiss(self.index, p["index"])
-        Path(p["hours"]).write_text(json.dumps(self.hours, ensure_ascii=False))
-        Path(p["meta"]).write_text(json.dumps({"n_docs": len(self.hours), "model": MODEL_NAME}, ensure_ascii=False))
+        if self.index is None or self.hours is None: return
+        _save_index(self.index, self.tag, self.hours)
 
-    def load(self):
-        p = self._paths()
-        self.index = _load_faiss(p["index"])
-        self.hours = json.loads(Path(p["hours"]).read_text())
-        meta = json.loads(Path(p["meta"]).read_text())
-        return meta
+    def load(self) -> bool:
+        idx, hrs = _load_index(self.tag)
+        if idx is None: return False
+        self.index, self.hours = idx, hrs
+        return True
 
-    def predict(self, text: str, k: int = 5) -> Tuple[float, List[Tuple[int, float, float]]]:
-        if self.index is None:
+    def predict(self, text: str, k: int = 5) -> Tuple[float, List[Tuple[int,float,float]]]:
+        if self.index is None or self.hours is None:
             raise RuntimeError("Índice no cargado")
         q = _embed_texts([text])
         D, I = self.index.search(q, k)
-        sims = D[0].tolist()
-        idxs = I[0].tolist()
-        neighbors: List[Tuple[int, float, float]] = []
+        sims = D[0].tolist(); idxs = I[0].tolist()
+        neigh = []
         for i, s in zip(idxs, sims):
             if i == -1: continue
-            neighbors.append((int(i), float(s), float(self.hours[i])))
-        total_sim = sum(s for _, s, _ in neighbors) or 1.0
-        est = sum(h * s for _, s, h in neighbors) / total_sim if neighbors else 0.0
-        return est, neighbors
+            neigh.append((int(i), float(s), float(self.hours[i])))
+        total = sum(s for _,s,_ in neigh) or 1.0
+        est = sum(h*s for _,s,h in neigh)/total if neigh else 0.0
+        return est, neigh
 
-# =========================
-# Entrenamiento por tipo
-# =========================
-def train_index_per_type() -> Dict[str, int]:
-    counts = {"desarrollo": 0, "implementacion": 0}
-    # --- Desarrollo (CESQ) ---
-    try:
-        df_hist = _load_and_label_historic(_cesq_path())
-    except Exception as e:
-        print("WARN CESQ:", e); df_hist = pd.DataFrame(columns=["text","hours","ticket","source"])
-    df_new = _load_new_estimations("desarrollo")
-    df_cat = _load_catalog(CATALOGO_CESQ)
-    df_dev = pd.concat([df_hist, df_cat, df_new], ignore_index=True)
-    if not df_dev.empty:
-        model_dev = EmbeddingsFaissEstimator("desarrollo")
-        model_dev.fit(df_dev["text"].tolist(), df_dev["hours"].tolist())
-        model_dev.save()
-        counts["desarrollo"] = len(df_dev)
-        ds_path = _dataset_csv_path("desarrollo")
-        cols = [c for c in ["text","hours","ticket","source"] if c in df_dev.columns]
-        df_dev[cols].reset_index(drop=True).to_csv(ds_path, index=False, encoding="utf-8")
-    # --- Implementación (PSTC) ---
-    try:
-        df_hist = _load_and_label_historic(_pstc_path())
-    except Exception as e:
-        print("WARN PSTC:", e); df_hist = pd.DataFrame(columns=["text","hours","ticket","source"])
-    df_new = _load_new_estimations("implementacion")
-    df_cat = _load_catalog(CATALOGO_PSTC)
-    df_imp = pd.concat([df_hist, df_cat, df_new], ignore_index=True)
-    if not df_imp.empty:
-        model_imp = EmbeddingsFaissEstimator("implementacion")
-        model_imp.fit(df_imp["text"].tolist(), df_imp["hours"].tolist())
-        model_imp.save()
-        counts["implementacion"] = len(df_imp)
-        ds_path = _dataset_csv_path("implementacion")
-        cols = [c for c in ["text","hours","ticket","source"] if c in df_imp.columns]
-        df_imp[cols].reset_index(drop=True).to_csv(ds_path, index=False, encoding="utf-8")
-    if counts["desarrollo"] == 0 and counts["implementacion"] == 0:
-        raise RuntimeError("No hay datos con horas en CESQ/PSTC ni en catálogos.")
-    return counts
+# ---------- Orquestación de entrenamiento ----------
+def _build_from_frame(tag: str, df: pd.DataFrame) -> int:
+    if df.empty: return 0
+    est = EmbeddingsFaissEstimator(tag)
+    est.fit(df["text"].astype(str).tolist(), df["hours"].astype(float).tolist())
+    est.save()
+    # Persistimos dataset para la UI
+    df[["text","hours","ticket","source"]].to_csv(_dataset_path(tag), index=False, encoding="utf-8")
+    return len(df)
 
-# =========================
-# Dataset para la UI
-# =========================
-def load_labeled_dataframe(tag: str) -> pd.DataFrame:
-    ds_path = _dataset_csv_path(tag)
-    if ds_path.exists():
-        try:
-            df = pd.read_csv(ds_path, encoding="utf-8")
-            if "text" in df.columns and "hours" in df.columns:
-                if "ticket" not in df.columns: df["ticket"] = [str(i) for i in range(len(df))]
-                if "source" not in df.columns: df["source"] = "unknown"
-                return df[["text","hours","ticket","source"]].reset_index(drop=True)
-        except Exception as e:
-            print("WARN load_labeled_dataframe persisted read:", e)
-    if tag == "desarrollo":
-        try: df_hist = _load_and_label_historic(_cesq_path())
-        except Exception: df_hist = pd.DataFrame(columns=["text","hours","ticket","source"])
-        df_new = _load_new_estimations("desarrollo")
-        df_cat = _load_catalog(CATALOGO_CESQ)
-        df = pd.concat([df_hist, df_cat, df_new], ignore_index=True)
-    elif tag == "implementacion":
-        try: df_hist = _load_and_label_historic(_pstc_path())
-        except Exception: df_hist = pd.DataFrame(columns=["text","hours","ticket","source"])
-        df_new = _load_new_estimations("implementacion")
-        df_cat = _load_catalog(CATALOGO_PSTC)
-        df = pd.concat([df_hist, df_cat, df_new], ignore_index=True)
+def train_index_per_type(full: bool=False) -> Dict[str,int]:
+    """
+    Render-safe:
+      - Si LAZY_BOOT=1 (default) y full=False: NO hace training pesado en el boot.
+        * Intenta cargar índices existentes.
+        * Si no existen, construye índices mínimos desde catálogos (ligeros).
+      - Con full=True: fuerza construir desde datasets (si existen).
+    """
+    counts = {"desarrollo":0,"implementacion":0}
+    lazy = LAZY_BOOT and not full
+
+    if lazy:
+        idx, hrs = _load_index("desarrollo")
+        counts["desarrollo"] = len(hrs) if hrs else _build_from_frame("desarrollo", load_labeled_dataframe("desarrollo"))
     else:
-        raise ValueError("tag inválido: usa 'desarrollo' o 'implementacion'")
-    if "ticket" not in df.columns: df["ticket"] = [str(i) for i in range(len(df))]
-    if "source" not in df.columns: df["source"] = "unknown"
-    return df.reset_index(drop=True)[["text","hours","ticket","source"]]
+        counts["desarrollo"] = _build_from_frame("desarrollo", load_labeled_dataframe("desarrollo"))
+
+    if lazy:
+        idx, hrs = _load_index("implementacion")
+        counts["implementacion"] = len(hrs) if hrs else _build_from_frame("implementacion", load_labeled_dataframe("implementacion"))
+    else:
+        counts["implementacion"] = _build_from_frame("implementacion", load_labeled_dataframe("implementacion"))
+
+    return counts
