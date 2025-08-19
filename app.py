@@ -13,6 +13,27 @@ from estimator import (
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "dev-secret")
 
+# --- Jinja filters ---
+@app.template_filter("hfmt")
+def hfmt(value):
+    """
+    Formatea horas para UI:
+    - 3   -> "3"
+    - 3.5 -> "3.5"
+    - 3.25 -> "3.25"
+    - 3.00 -> "3"
+    Sin unidades; la plantilla agrega " h".
+    """
+    try:
+        v = float(value)
+        if abs(v - round(v)) < 1e-9:
+            return str(int(round(v)))
+        s = f"{v:.2f}".rstrip("0").rstrip(".")
+        return s
+    except Exception:
+        return value
+
+
 
 # -------------------------
 # Helpers
