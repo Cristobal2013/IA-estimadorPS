@@ -24,6 +24,31 @@ def hfmt(value):
     except Exception:
         return value
 
+# --- Global `status` for templates (so it's never undefined) ---
+@app.context_processor
+def inject_status():
+    try:
+        emb_model = os.environ.get("EMB_MODEL", "sentence-transformers/paraphrase-MiniLM-L3-v2")
+    except Exception:
+        emb_model = "unknown"
+    # counts are best-effort; avoid breaking page on failure
+    kb_count = 0
+    try:
+        kb_count += len(load_labeled_dataframe("desarrollo"))
+    except Exception:
+        pass
+    try:
+        kb_count += len(load_labeled_dataframe("implementacion"))
+    except Exception:
+        pass
+    status = {
+        "emb_enabled": True,
+        "kb_count": kb_count,
+        "emb": True,
+        "emb_model": emb_model,
+    }
+    return dict(status=status)
+
 
 
 # -------------------------
@@ -247,27 +272,6 @@ def index():
                 "source": src,
             })
 
-
-        # --- Build lightweight status for template ---
-        try:
-            emb_model = os.environ.get("EMB_MODEL", "sentence-transformers/paraphrase-MiniLM-L3-v2",
-        status=status)
-        except Exception:
-            emb_model = "unknown"
-        try:
-            dev_count = len(load_labeled_dataframe("desarrollo"))
-        except Exception:
-            dev_count = 0
-        try:
-            imp_count = len(load_labeled_dataframe("implementacion"))
-        except Exception:
-            imp_count = 0
-        status = {
-            "emb_enabled": True,
-            "kb_count": dev_count + imp_count,
-            "emb": True,
-            "emb_model": emb_model,
-        }
     return render_template(
         "index.html",
         form=form,
@@ -294,7 +298,6 @@ def retrain():
 
 # --- Endpoint aliases for template compatibility ---
 try:
-    # Alias for retrain
     if "retrain_route" not in app.view_functions and "retrain" in app.view_functions:
         app.add_url_rule("/retrain", endpoint="retrain_route",
                          view_func=app.view_functions["retrain"], methods=["POST"])
@@ -302,12 +305,9 @@ except Exception:
     pass
 
 try:
-    # Alias for upload
     if "upload_route" not in app.view_functions:
-        # common upload endpoints you might have used
         for cand in ("upload", "upload_csv", "csv_upload"):
             if cand in app.view_functions:
-                # reuse the same rule if possible; otherwise map to /upload
                 app.add_url_rule("/upload", endpoint="upload_route",
                                  view_func=app.view_functions[cand], methods=["POST"])
                 break
