@@ -10,13 +10,13 @@ from estimator import (
     load_labeled_dataframe,
 )
 
-# ⬇️ Importa y registra el filtro hfmt
+# ⬇️ filtro hfmt
 from hfmt_filter import register_jinja_filters, _hfmt
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "dev-secret")
 
-# ⬇️ Registro del filtro (idempotente y a prueba de recompilaciones)
+# ⬇️ registro a prueba de balas del filtro
 register_jinja_filters(app)
 app.add_template_filter(_hfmt, name="hfmt")
 
@@ -76,6 +76,27 @@ def _filter_neighbors_by_source(neighbors, labeled_df, origen):
         if src == origen:
             keep.append((idx, sim, h))
     return keep
+
+
+def _status_obj():
+    # ¿hay embeddings?
+    try:
+        import faiss  # noqa
+        from sentence_transformers import SentenceTransformer  # noqa
+        emb_enabled = True
+    except Exception:
+        emb_enabled = False
+    # conteo KB
+    kb_count = 0
+    try:
+        kb_count += len(load_labeled_dataframe("desarrollo"))
+    except Exception:
+        pass
+    try:
+        kb_count += len(load_labeled_dataframe("implementacion"))
+    except Exception:
+        pass
+    return type("Obj", (), {"emb_enabled": emb_enabled, "kb_count": kb_count})
 
 
 # Entrenar índices al iniciar (histórico + catálogos + nuevas)
@@ -247,15 +268,23 @@ def index():
                 "source": src,
             })
 
-    return render_template(
-        "index.html",
+    # ⬇️ Compat con plantillas que esperan otras variables
+    ctx = dict(
         form=form,
         estimate=estimate,
         estimate_top1=estimate_top1,
         neighbors=neighbors,
         examples=examples,
-        debug_info=debug_info
+        debug_info=debug_info,
+        status=_status_obj(),       # <— evita 'status is undefined'
+        kb_hits=examples,           # alias para plantillas antiguas
+        top_k=len(examples) or 0,
+        estimate_catalog=0.0,       # seguro si el template lo muestra
+        estimate_semantic=None,     # seguro si el template lo muestra
+        w_catalog=0.5,
+        w_semantic=0.5,
     )
+    return render_template("index.html", **ctx)
 
 
 @app.route("/retrain", methods=["POST"])
