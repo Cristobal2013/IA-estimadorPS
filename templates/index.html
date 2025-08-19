@@ -6,6 +6,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>IA Estimador</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:#0b1220; color:#f2f4f8; }
+    .container { max-width: 980px; margin: 24px auto; padding: 0 16px; }
+    h1 { font-weight: 700; margin-bottom: 8px; }
+    .status .tag { background:#1f2a44; border-radius:999px; padding:6px 10px; margin-right:8px; font-size:12px; }
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+    .card { background:#0f172a; border:1px solid #1e293b; border-radius:16px; padding:16px; }
+    .pill { background:#334155; padding:2px 8px; border-radius:999px; font-weight:700; }
+    textarea, select, input[type="number"] { width:100%; background:#0b1020; color:#e2e8f0; border:1px solid #334155; border-radius:10px; padding:10px; }
+    button { background:#2563eb; color:white; border:none; border-radius:10px; padding:10px 14px; font-weight:600; cursor:pointer; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { text-align:left; padding:8px; border-bottom:1px solid #1e293b; vertical-align: top; }
+    .wrap { white-space: pre-wrap; }
+    footer { margin-top: 24px; color:#94a3b8; }
+    form.inline > * { margin-right:8px; }
+  </style>
 </head>
 <body>
   <div class="container">
@@ -14,82 +30,78 @@
     <div class="status">
       <span class="tag">Embeddings: {{ 'ON' if status.emb_enabled else 'OFF' }}</span>
       <span class="tag">KB: {{ status.kb_count }}</span>
-      <span class="tag">Emb index: {{ 'OK' if status.emb else '—' }}</span>
     </div>
 
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        <div class="flash-area">
-          {% for category, message in messages %}
-            <div class="flash {{ category }}">{{ message }}</div>
-          {% endfor %}
+    <form action="{{ url_for('estimate') }}" method="post" style="margin-top:16px">
+      <div class="card">
+        <div class="grid">
+          <div>
+            <label>Tipo</label>
+            <select name="tipo">
+              <option value="Implementación" {% if tipo=='Implementación' %}selected{% endif %}>Implementación (PSTC)</option>
+              <option value="Desarrollo" {% if tipo=='Desarrollo' %}selected{% endif %}>Desarrollo (CESQ)</option>
+            </select>
+          </div>
+          <div>
+            <label>top_k</label>
+            <input type="number" min="1" max="20" name="top_k" value="{{ top_k }}"/>
+          </div>
         </div>
-      {% endif %}
-    {% endwith %}
-
-    <!-- Form de estimación -->
-    <form method="post" action="{{ url_for('index') }}" class="card">
-      <input type="hidden" name="action" value="estimate" />
-      <div class="field">
-        <label for="tipo">Tipo de requerimiento</label>
-        <select id="tipo" name="tipo">
-          <option value="CESQ" {{ 'selected' if form.tipo == 'CESQ' else '' }}>CESQ (desarrollo)</option>
-          <option value="PSTC" {{ 'selected' if form.tipo == 'PSTC' else '' }}>PSTC (implementación)</option>
-        </select>
-      </div>
-
-      <div class="field">
-        <label for="descripcion">Descripción</label>
-        <textarea id="descripcion" name="descripcion" rows="6" placeholder="Describe el ticket o requerimiento...">{{ form.descripcion }}</textarea>
-      </div>
-
-      <div class="actions">
-        <button type="submit">Estimar</button>
+        <div style="margin-top:12px">
+          <label>Descripción</label>
+          <textarea name="texto" rows="5" placeholder="Describe el requerimiento">{{ texto }}</textarea>
+        </div>
+        <div class="grid" style="margin-top:12px">
+          <div>
+            <label>Peso Catálogo</label>
+            <input type="number" step="0.1" min="0" max="1" name="w_catalog" value="{{ w_catalog }}"/>
+          </div>
+          <div>
+            <label>Peso Semántico</label>
+            <input type="number" step="0.1" min="0" max="1" name="w_semantic" value="{{ w_semantic }}"/>
+          </div>
+        </div>
+        <div style="margin-top:12px">
+          <button type="submit">Estimar</button>
+          <form class="inline" action="{{ url_for('retrain_route') }}" method="post" style="display:inline">
+            <button type="submit" style="background:#475569">Reentrenar</button>
+          </form>
+        </div>
       </div>
     </form>
 
-    <!-- Acciones de histórico (fuera del form principal para evitar anidación) -->
-    <div class="card actions-row">
-      <form method="post" action="{{ url_for('retrain_route') }}">
-        <button type="submit" class="secondary">Reentrenar histórico</button>
-      </form>
-      <form method="post" action="{{ url_for('upload_route') }}" enctype="multipart/form-data">
-        <input type="file" name="file" accept=".csv" />
-        <button type="submit" class="secondary">Subir CSV</button>
-      </form>
-    </div>
+    <div class="grid" style="margin-top:16px">
+      <div class="card">
+        <h3>Resultados</h3>
+        <div>Catálogo base: <span class="pill">{{ estimate_catalog|hfmt }} h</span></div>
+        <div>IA semántica: <span class="pill">{{ estimate_semantic is not none and (estimate_semantic|hfmt ~ ' h') or '—' }}</span></div>
+        <div>IA combinada: <span class="pill">{{ estimate|hfmt }} h</span></div>
+      </div>
 
-    <div class="results">
-      <div>Catálogo base: <span class="pill">{{ estimate_catalog|hfmt }} h</span></div>
-      <div>IA similitud: <span class="pill">{{ estimate_semantic|hfmt }} h</span></div>
-      <div>IA combinada: <span class="pill">{{ estimate|hfmt }} h</span></div>
+      {% if kb_hits and kb_hits|length > 0 %}
+      <div class="card">
+        <h3>Coincidencias del histórico (top {{ top_k }})</h3>
+        <table>
+          <thead>
+            <tr><th>Ticket</th><th>Horas</th><th>Similitud</th><th>Descripción</th></tr>
+          </thead>
+          <tbody>
+            {% for h in kb_hits %}
+            <tr>
+              <td>{{ h.ticket }}</td>
+              <td>{{ h.horas is not none and (h.horas|hfmt) or '—' }}</td>
+              <td>{{ h.similitud }}</td>
+              <td class="wrap">{{ h.descripcion }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
     </div>
-
-    {% if kb_hits and kb_hits|length > 0 %}
-    <div class="card">
-      <h3>Coincidencias del histórico (top {{ top_k }})</h3>
-      <table class="tbl">
-        <thead>
-          <tr><th>#</th><th>ID</th><th>Tipo</th><th>Horas</th><th>Similitud</th><th>Descripción</th></tr>
-        </thead>
-        <tbody>
-          {% for h in kb_hits %}
-          <tr>
-            <td>{{ loop.index }}</td>
-            <td>{{ h.id }}</td>
-            <td>{{ h.tipo }}</td>
-            <td>{{ h.horas if h.horas is not none else '—' }}</td>
-            <td>{{ '{:.3f}'.format(h.sim) if h.sim is defined else '—' }}</td>
-            <td class="wrap">{{ h.descripcion[:300] }}{% if h.descripcion|length > 300 %}…{% endif %}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% endif %}
 
     <footer>
-      <small>Render-ready • Flask + Gunicorn • Catálogo + Histórico + Reentrenar + Upload</small>
+      <small>Flask + (opcional) SentenceTransformers/FAISS. Si embeddings no están disponibles, usa similitud Jaccard.</small>
     </footer>
   </div>
 </body>
