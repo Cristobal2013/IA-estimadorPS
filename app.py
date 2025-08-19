@@ -48,8 +48,10 @@ def index():
     )
     return render_template("index.html", **ctx)
 
+
 @app.post("/estimate")
 def estimate():
+    import math
     tipo = request.form.get("tipo","Implementación")
     texto = request.form.get("texto","").strip()
     top_k = int(request.form.get("top_k","5") or 5)
@@ -58,14 +60,31 @@ def estimate():
 
     est = INDEXES.get(tipo)
     kb_hits = est.query(texto, top_k=top_k) if est else []
-    # semantic estimate: mean of available hours among hits
-    horas_hits = [h.get("horas") for h in kb_hits if h.get("horas") is not None]
-    estimate_semantic = round(sum(horas_hits)/len(horas_hits),2) if horas_hits else None
+
+    # Sanitize horas in kb_hits: convert NaN/None/non-numerics to None (for clean display & mean)
+    def _to_num_or_none(x):
+        try:
+            v = float(x)
+            if math.isfinite(v):
+                return v
+            return None
+        except Exception:
+            return None
+
+    for h in kb_hits:
+        h["horas"] = _to_num_or_none(h.get("horas"))
+
+    horas_hits = [h["horas"] for h in kb_hits if h.get("horas") is not None]
+    estimate_semantic = (round(sum(horas_hits)/len(horas_hits), 2) if horas_hits else None)
 
     estimate_catalog = round(estimate_from_catalog(texto, tipo), 2)
+
+    # Combine only finite parts
     parts = []
-    if estimate_semantic is not None: parts.append(w_semantic * estimate_semantic)
-    if estimate_catalog is not None: parts.append(w_catalog * estimate_catalog)
+    if isinstance(estimate_semantic, (int, float)) and math.isfinite(estimate_semantic):
+        parts.append(w_semantic * estimate_semantic)
+    if isinstance(estimate_catalog, (int, float)) and math.isfinite(estimate_catalog):
+        parts.append(w_catalog * estimate_catalog)
     estimate = round(sum(parts), 2) if parts else 0.0
 
     status = {
@@ -86,6 +105,7 @@ def estimate():
         w_semantic=w_semantic,
     )
     return render_template("index.html", **ctx)
+
 
 @app.post("/retrain")
 def retrain():
