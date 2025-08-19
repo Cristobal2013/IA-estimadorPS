@@ -12,7 +12,8 @@ from estimator import (
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "dev-secret")
-
+from hfmt_filter import register_jinja_filters
+register_jinja_filters(app)
 
 # -------------------------
 # Helpers
