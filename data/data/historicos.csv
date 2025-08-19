@@ -1,5 +1,0 @@
-
-id,tipo,descripcion,horas
-TCK-001,CESQ,Crear endpoint para listar facturas por RUT con filtros y paginación,8
-TCK-002,PSTC,Configurar login con certificado digital en Firefox con PKCS#11,6
-TCK-003,CESQ,Agregar 30 campos nuevos al formulario y reportes asociados,10
