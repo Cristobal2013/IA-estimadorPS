@@ -13,30 +13,6 @@ from estimator import (
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "dev-secret")
 
-# --- Global status for templates (ensures `status` is always defined) ---
-@app.context_processor
-def inject_status():
-    emb_model = os.environ.get("EMB_MODEL", "sentence-transformers/paraphrase-MiniLM-L3-v2")
-    return dict(status={
-        "emb_enabled": True,
-        "kb_count": 0,
-        "emb": True,
-        "emb_model": emb_model,
-    })
-
-
-# --- Jinja filter: format hours ---
-@app.template_filter("hfmt")
-def hfmt(value):
-    try:
-        v = float(value)
-        if abs(v - round(v)) < 1e-9:
-            return str(int(round(v)))
-        return f"{v:.2f}".rstrip("0").rstrip(".")
-    except Exception:
-        return value
-
-
 
 # -------------------------
 # Helpers
@@ -281,6 +257,17 @@ def retrain():
         flash(f"Error al reentrenar: {e}", "err")
     return redirect(url_for("index"))
 
+
+
+# --- Alias endpoint to satisfy template url_for('retrain_route') ---
+try:
+    if "retrain_route" not in app.view_functions and "retrain" in app.view_functions:
+        @app.route("/retrain", methods=["POST"], endpoint="retrain_route")
+        def retrain_route():
+            # Delegate to existing 'retrain' handler
+            return app.view_functions["retrain"]()
+except Exception:
+    pass
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=7860, debug=True)
