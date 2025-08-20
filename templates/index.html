@@ -1,108 +1,94 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>IA Estimador</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <meta charset="UTF-8">
+  <title>Estimador IA</title>
+  <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
   <div class="container">
-    <h1>IA Estimador</h1>
+    <h1>Estimador de Horas con IA</h1>
 
-    <div class="status">
-      <span class="tag">Embeddings: {{ 'ON' if status.emb_enabled else 'OFF' }}</span>
-      <span class="tag">KB: {{ status.kb_count }}</span>
-    </div>
-
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        <div class="flash-area">
-          {% for category, message in messages %}
-            <div class="flash {{ category }}">{{ message }}</div>
-          {% endfor %}
-        </div>
-      {% endif %}
-    {% endwith %}
-
-    <!-- Form de estimación -->
-    <form method="post" action="{{ url_for('index') }}" class="card">
-      <input type="hidden" name="accion" value="estimar" />
-      <div class="field">
-        <label for="tipo">Tipo de requerimiento</label>
-        <select id="tipo" name="tipo">
-          <option value="desarrollo" {{ 'selected' if form.tipo == 'desarrollo' else '' }}>CESQ (desarrollo)</option>
-          <option value="implementacion" {{ 'selected' if form.tipo == 'implementacion' else '' }}>PSTC (implementación)</option>
-        </select>
-      </div>
-
-      <div class="field">
-        <label for="texto">Descripción</label>
-        <textarea id="texto" name="texto" rows="6" placeholder="Describe el ticket o requerimiento...">{{ form.texto }}</textarea>
-      </div>
-
-      <div class="field">
-        <label for="metodo">Método</label>
-        <select id="metodo" name="metodo">
-          <option value="softmax" {{ 'selected' if form.metodo == 'softmax' else '' }}>Softmax</option>
-          <option value="top1" {{ 'selected' if form.metodo == 'top1' else '' }}>Top 1</option>
-        </select>
-      </div>
-
-      <div class="field">
-        <label for="origen">Origen</label>
-        <select id="origen" name="origen">
-          <option value="todos" {{ 'selected' if form.origen == 'todos' else '' }}>Todos</option>
-          <option value="historic" {{ 'selected' if form.origen == 'historic' else '' }}>Histórico</option>
-          <option value="catalog" {{ 'selected' if form.origen == 'catalog' else '' }}>Catálogo</option>
-          <option value="new" {{ 'selected' if form.origen == 'new' else '' }}>Nuevos</option>
-        </select>
-      </div>
-
-      <div class="actions">
-        <button type="submit">Estimar</button>
-      </div>
-    </form>
-
-    <!-- Solo reentrenar (sin upload) -->
-    <div class="card actions-row">
-     <form method="post" action="{{ url_for('retrain') }}">
-        <button type="submit" class="secondary">Reentrenar histórico</button>
-      </form>
-    </div>
-
-    <!-- Resultados: usa las variables que pasa app.py -->
-    <div class="results">
-      <div>Estimación (método): <span class="pill">{{ estimate is not none and (estimate|hfmt ~ ' h') or '—' }}</span></div>
-      <div>Top 1: <span class="pill">{{ estimate_top1 is not none and (estimate_top1|hfmt ~ ' h') or '—' }}</span></div>
-    </div>
-
-    {% if examples and examples|length > 0 %}
     <div class="card">
-      <h3>Coincidencias (top {{ examples|length }})</h3>
-      <table class="tbl">
-        <thead>
-          <tr><th>#</th><th>Ticket</th><th>Horas</th><th>Similitud</th><th>Fuente</th><th>Descripción</th></tr>
-        </thead>
-        <tbody>
-          {% for h in examples %}
-          <tr>
-            <td>{{ loop.index }}</td>
-            <td>{{ h.ticket }}</td>
-            <td>{{ h.horas is not none and (h.horas|hfmt) or '—' }}</td>
-            <td>{{ h.sim is not none and ('%.3f'|format(h.sim)) or '—' }}</td>
-            <td>{{ h.source }}</td>
-            <td class="wrap">{{ h.texto }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+      <div class="field">
+        <label for="tipo">Tipo</label>
+        <select id="tipo" name="tipo">
+          <option value="desarrollo">CESQ (Desarrollo)</option>
+          <option value="implementacion">PSTC (Implementación)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="texto">Solicitud</label>
+        <textarea id="texto" placeholder="Describe el requerimiento..."></textarea>
+      </div>
+      <div class="actions">
+        <button id="btn-estimar" type="button">Estimar</button>
+      </div>
     </div>
-    {% endif %}
 
-    <footer>
-      <small>Render-ready • Flask + Gunicorn • Reentrenar desde UI • Sin upload</small>
-    </footer>
+    <div id="live-result" class="card" style="display:none;"></div>
   </div>
+
+  <script>
+  const $ = sel => document.querySelector(sel);
+  const resBox = $("#live-result");
+  let lastResult = null;
+
+  $("#btn-estimar").addEventListener("click", async () => {
+    const payload = { tipo: $("#tipo").value, texto: $("#texto").value.trim() };
+    const r = await fetch("/api/estimate", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(payload)
+    });
+    const data = await r.json();
+    lastResult = data;
+    resBox.innerHTML = `
+      <h3>Estimación</h3>
+      <p><span class="pill">${(data.horas ?? 0).toFixed(2)} h</span> <small>(${data.metodo || 'faiss'})</small></p>
+      ${Array.isArray(data.top) ? `
+        <h4>Coincidencias</h4>
+        <table class="tbl">
+          <thead><tr><th>#</th><th>Ticket</th><th>Horas</th><th>Similitud</th><th>Descripción</th></tr></thead>
+          <tbody>
+          ${data.top.slice(0,3).map((t,i)=>`
+            <tr>
+              <td>${i+1}</td>
+              <td>${t.ticket || ''}</td>
+              <td>${t.hours ?? ''}</td>
+              <td>${(t.sim || 0).toFixed(3)}</td>
+              <td class="wrap">${t.text || ''}</td>
+            </tr>`).join("")}
+          </tbody>
+        </table>
+      ` : ""}
+      <div class="actions-row">
+        <button id="btn-accept">Guardar esta estimación</button>
+      </div>
+    `;
+    resBox.style.display = "block";
+
+    $("#btn-accept")?.addEventListener("click", async () => {
+      const top1 = (lastResult?.top || [])[0] || {};
+      const payload2 = {
+        tipo: $("#tipo").value,
+        texto: $("#texto").value.trim(),
+        horas: lastResult?.horas || 0,
+        top_ticket: top1.ticket || "",
+        top_sim: top1.sim || 0,
+        metodo: lastResult?.metodo || "faiss",
+        autor: "web",
+        comentarios: ""
+      };
+      const r2 = await fetch("/api/accept", {
+        method:"POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(payload2)
+      });
+      const j2 = await r2.json();
+      if (j2.ok) { alert("✅ Estimación guardada."); } else { alert("⚠️ No se pudo guardar."); }
+    });
+  });
+  </script>
 </body>
 </html>

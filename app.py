@@ -1,429 +1,74 @@
-# app.py — orden de import seguro + app expuesta a nivel módulo (FAISS-kNN weighting)
-
-from flask import Flask, render_template, request, redirect, url_for, flash
-from pathlib import Path
+from flask import Flask, render_template, request, jsonify
+import csv, time, json
 import pandas as pd
-import datetime as dt
-import re, math, os, json
+from pathlib import Path
 
-# === 1) Crear y EXPONER la app ANTES de cualquier otra cosa ===
 app = Flask(__name__)
-application = app  # alias por si algún runner usa application
+DATA_DIR = Path(__file__).parent / "data"
+NEW_EST_CSV = DATA_DIR / "estimaciones_nuevas.csv"
+NEW_EST_CSV.parent.mkdir(parents=True, exist_ok=True)
 
-# === 2) Filtro hfmt con fallback (por si falta hfmt_filter.py) ===
-try:
-    from hfmt_filter import register_jinja_filters, _hfmt
-except Exception:
-    def _hfmt(v):
-        try:
-            x = float(v)
-            if x != x:  # NaN
-                return "—"
-            return f"{round(x, 2):g}"
-        except Exception:
-            return "—"
-    def register_jinja_filters(flask_app):
-        flask_app.add_template_filter(_hfmt, name="hfmt")
+CSV_FIELDS = ["timestamp","tipo","texto","horas","top_ticket","top_sim","metodo","autor","comentarios"]
 
-# Registrar filtro (idempotente)
-register_jinja_filters(app)
-app.add_template_filter(_hfmt, name="hfmt")
+def append_row_safe(row: dict):
+    new_file = not NEW_EST_CSV.exists() or NEW_EST_CSV.stat().st_size == 0
+    with open(NEW_EST_CSV, "a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+        if new_file:
+            w.writeheader()
+        out = {k: row.get(k, "") for k in CSV_FIELDS}
+        w.writerow(out)
 
-@app.before_request
-def _ensure_hfmt():
-    if "hfmt" not in app.jinja_env.filters:
-        app.add_template_filter(_hfmt, name="hfmt")
+def load_new_estimations() -> pd.DataFrame:
+    if NEW_EST_CSV.exists():
+        df = pd.read_csv(NEW_EST_CSV)
+        df_norm = pd.DataFrame({
+            "ticket": df.get("top_ticket", pd.Series([""]*len(df))),
+            "hours": df.get("horas", 0.0),
+            "text": df.get("texto", ""),
+            "source": "new",
+            "tipo": df.get("tipo", "")
+        })
+        return df_norm
+    return pd.DataFrame(columns=["ticket","hours","text","source","tipo"])
 
-# === 3) Recién ahora importa lo pesado que usa la app ===
-from estimator import (
-    EmbeddingsFaissEstimator,
-    train_index_per_type,
-    load_labeled_dataframe,
-)
-
-# =========================
-# Config de FAISS-kNN (env)
-# =========================
-USE_FAISS_KNN = os.environ.get("USE_FAISS_KNN", "1") == "1"   # usa kNN en lugar de softmax
-KNN_TOPK      = int(os.environ.get("KNN_TOPK", "8"))          # vecinos máx tras filtro
-KNN_MINSIM    = float(os.environ.get("KNN_MINSIM", "0.12"))   # umbral de similitud mínimo
-KNN_P         = float(os.environ.get("KNN_P", "2.0"))         # potencia para pesos (s-τ)^p
-KNN_DYNAMIC   = os.environ.get("KNN_DYNAMIC", "1") == "1"     # τ dinámico = max(minsim, 0.8*sim_top)
-
-
-# -------------------------
-# Helpers
-# -------------------------
-def _extract_field_count(text: str) -> int:
-    if not text:
-        return 0
-    m = re.search(r"(\d+)\s*(campos?|columnas?|fields?)", text.lower())
-    return int(m.group(1)) if m else 0
-
-
-def _neighbor_based_cost_per_field(neighbors, labeled_df) -> float:
-    numer, denom = 0.0, 0.0
-    for idx, sim, h in neighbors:
-        if idx is None or idx < 0 or idx >= len(labeled_df):
-            continue
-        t = str(labeled_df.loc[idx, "text"])
-        n = _extract_field_count(t)
-        if n > 0:
-            try:
-                numer += float(h); denom += float(n)
-            except Exception:
-                pass
-    if denom > 0:
-        return numer / denom
-    return 0.35  # fallback
-
-
-# ---------- NUEVO: recorte + FAISS-kNN ----------
-def _prepare_neighbors_for_estimation(neighbors, top_k=KNN_TOPK, min_sim=KNN_MINSIM):
-    """
-    Ordena por similitud desc, filtra por umbral y limita a top_k.
-    Evita que muchos vecinos con s≈0 y horas grandes inflen la estimación.
-    """
-    if not neighbors:
-        return []
-    nn = sorted(neighbors, key=lambda t: t[1], reverse=True)
-    nn = [t for t in nn if float(t[1]) >= float(min_sim)]
-    return nn[:int(top_k)]
-
-
-def _estimate_with_faiss_knn(neighbors, min_sim=KNN_MINSIM, top_k=KNN_TOPK, p=KNN_P, dynamic=KNN_DYNAMIC):
-    """
-    Estimación FAISS-kNN (sin softmax):
-      - τ (umbral) fijo o dinámico respecto al top (0.8 * sim_top)
-      - vecinos útiles: s >= τ, limitado a top_k
-      - pesos = (s - τ)^p normalizados
-    """
-    if not neighbors:
-        return 0.0, []
-
-    # Ordenar y obtener top sim
-    nn = sorted(neighbors, key=lambda t: t[1], reverse=True)
-    sims = [float(s) for _, s, _ in nn]
-    top_sim = sims[0] if sims else 0.0
-
-    # Umbral τ
-    tau = max(min_sim, 0.8 * top_sim) if dynamic else min_sim
-
-    # Selección
-    sel = [(i, s, h) for (i, s, h) in nn if float(s) >= float(tau)][:int(top_k)]
-    if not sel:
-        # Fallback: top1 si nada supera τ
-        return nn[0][2] if nn else 0.0, []
-
-    # Pesos
-    ws = [max(0.0, (float(s) - tau)) ** float(p) for _, s, _ in sel]
-    Z = sum(ws)
-    if Z <= 0:
-        return sel[0][2], []
-    wnorm = [w / Z for w in ws]
-
-    hours = [float(h) for _, _, h in sel]
-    estimate = sum(w * h for w, h in zip(wnorm, hours))
-    return estimate, wnorm
-
-
-# (Se mantiene por compatibilidad si desactivas USE_FAISS_KNN=0)
-def _estimate_with_softmax(neighbors, temperature=0.20):
-    if not neighbors:
-        return 0.0, []
-    sims = [max(0.0, float(s)) for _, s, _ in neighbors]
-    # rebase para aplanar colas (mejor comportamiento si alguien usa softmax)
-    if sims:
-        max_s = max(sims)
-        sims = [s - max_s for s in sims]
-    exps = [math.exp(s / temperature) for s in sims]
-    Z = sum(exps) or 1.0
-    weights = [e / Z for e in exps]
-    hours = [float(h) for _, _, h in neighbors]
-    estimate = sum(w * h for w, h in zip(weights, hours))
-    return estimate, weights
-
-
-def _filter_neighbors_by_source(neighbors, labeled_df, origen):
-    if origen in (None, "", "todos"):
-        return neighbors
-    keep = []
-    for idx, sim, h in neighbors:
-        if idx is None or idx < 0 or idx >= len(labeled_df):
-            continue
-        src = str(labeled_df.loc[idx].get("source", "unknown"))
-        if src == origen:
-            keep.append((idx, sim, h))
-    return keep
-
-
-def _status_obj():
-    try:
-        import faiss  # noqa
-        from sentence_transformers import SentenceTransformer  # noqa
-        emb_enabled = True
-    except Exception:
-        emb_enabled = False
-    kb_count = 0
-    try:
-        kb_count += len(load_labeled_dataframe("desarrollo"))
-    except Exception:
-        pass
-    try:
-        kb_count += len(load_labeled_dataframe("implementacion"))
-    except Exception:
-        pass
-    return type("Obj", (), {"emb_enabled": emb_enabled, "kb_count": kb_count})
-
-
-# -------------------------
-# Entrenamiento al iniciar (opcional completo si TRAIN_FULL_ON_BOOT=1)
-# -------------------------
-try:
-    boot_full = os.environ.get("TRAIN_FULL_ON_BOOT", "0") == "1"
-    counts = train_index_per_type(full=boot_full)
-    print(
-        f"Índices entrenados. "
-        f"Desarrollo={counts.get('desarrollo',0)}, "
-        f"Implementación={counts.get('implementacion',0)}"
-    )
-except Exception as e:
-    print("WARN: No se pudo entrenar índices al iniciar:", e)
-
-
-# -------------------------
-# Rutas
-# -------------------------
-@app.route("/", methods=["GET", "POST"])
+@app.route("/")
 def index():
-    estimate = None
-    estimate_top1 = None
-    neighbors = []
-    debug_info = {}
+    return render_template("index.html")
 
-    form = {
-        "tipo": "desarrollo",
-        "texto": "",
-        "metodo": "softmax",
-        "origen": "todos",
+@app.post("/api/estimate")
+def api_estimate():
+    data = request.get_json(force=True, silent=True) or {}
+    result = {
+        "horas": 12.5,
+        "metodo": "faiss",
+        "top": [
+            {"ticket": "CESQ-3956", "hours": 5, "sim": 0.658, "text": "[CL][PPL] Ejemplo"},
+            {"ticket": "CESQ-3957", "hours": 3, "sim": 0.642, "text": "[CHILE][ALSEA] Otro ejemplo"},
+            {"ticket": "CESQ-3960", "hours": 8, "sim": 0.630, "text": "[PE][ABC] Más ejemplo"}
+        ]
     }
-
-    if request.method == "POST":
-        accion = request.form.get("accion", "estimar")
-        form["tipo"] = request.form.get("tipo", "desarrollo")
-        form["texto"] = request.form.get("texto", "")
-        form["metodo"] = request.form.get("metodo", "softmax")
-        form["origen"] = request.form.get("origen", "todos")
-
-        tag = "desarrollo" if form["tipo"] == "desarrollo" else "implementacion"
-
-        est = EmbeddingsFaissEstimator(tag)
-        loaded = False
-        try:
-            loaded = est.load()
-        except Exception:
-            loaded = False
-        if not loaded:
-            try:
-                train_index_per_type(full=True)  # fuerza histórico+catálogo+nuevos
-                est.load()
-            except Exception as e2:
-                return (f"No se pudo cargar/entrenar el índice [{tag}]: {e2}", 500)
-
-        if accion == "guardar":
-            metodo_usado = request.form.get("metodo_usado", form["metodo"])
-            estimacion_ia = request.form.get("estimacion_ia")
-            estimacion_top1 = request.form.get("estimacion_top1")
-            estimacion_final = request.form.get("estimacion_final")
-            horas_reales = request.form.get("horas_reales")
-
-            if not estimacion_final:
-                if metodo_usado == "top1" and estimacion_top1:
-                    estimacion_final = estimacion_top1
-                elif metodo_usado == "softmax" and estimacion_ia:
-                    estimacion_final = estimacion_ia
-
-            def to_float(x):
-                try:
-                    return float(x) if x not in (None, "", "-", "—") else None
-                except Exception:
-                    return None
-
-            out = Path("data/estimaciones_nuevas.csv")
-            out.parent.mkdir(parents=True, exist_ok=True)
-            row = {
-                "fecha": dt.datetime.now().isoformat(timespec="seconds"),
-                "tipo": form["tipo"],
-                "texto": form["texto"],
-                "metodo_usado": metodo_usado,
-                "estimacion_ia": to_float(estimacion_ia),
-                "estimacion_top1": to_float(estimacion_top1),
-                "estimacion_final": to_float(estimacion_final),
-                "horas_reales": to_float(horas_reales),
-            }
-            df_out = pd.DataFrame([row])
-            header = not out.exists()
-            df_out.to_csv(out, mode="a", header=header, index=False, encoding="utf-8")
-
-            flash("Estimación guardada. El modelo aprenderá con futuros reentrenos.", "ok")
-            return redirect(url_for("index"))
-
-        # === Estimar ===
-        est_soft_unused, neighbors_all = est.predict(form["texto"], k=30)
-        labeled = load_labeled_dataframe(tag).reset_index(drop=True)
-
-        counts_all = {"historic": 0, "catalog": 0, "new": 0, "unknown": 0}
-        rows_all = []
-        for (i, s, h) in neighbors_all:
-            if i is None or i < 0 or i >= len(labeled):
-                continue
-            src_i = str(labeled.loc[i].get("source", "unknown"))
-            counts_all[src_i] = counts_all.get(src_i, 0) + 1
-            rows_all.append({
-                "idx": int(i),
-                "sim": float(round(s, 4)),
-                "hours": float(round(h, 4)),
-                "ticket": str(labeled.loc[i].get("ticket", "?")),
-                "source": src_i,
-                "text": str(labeled.loc[i].get("text", ""))[:180]
-            })
-
-        # Filtrar por origen
-        neighbors = _filter_neighbors_by_source(neighbors_all, labeled, form.get("origen", "todos"))
-
-        # Recorte para cálculo (evita colas con similitud baja)
-        neighbors_used = _prepare_neighbors_for_estimation(neighbors, top_k=KNN_TOPK, min_sim=KNN_MINSIM)
-
-        debug_info = {
-            "tipo": tag,
-            "texto": form.get("texto", ""),
-            "origen": form.get("origen", "todos"),
-            "k_all": len(neighbors_all),
-            "k_filtered": len(neighbors),
-            "k_used_after_prune": len(neighbors_used),
-            "counts_all": counts_all,
-            "neighbors_all": rows_all[:12],
-            "faiss_params": {
-                "USE_FAISS_KNN": USE_FAISS_KNN,
-                "KNN_TOPK": KNN_TOPK,
-                "KNN_MINSIM": KNN_MINSIM,
-                "KNN_P": KNN_P,
-                "KNN_DYNAMIC": KNN_DYNAMIC,
-            }
-        }
-
-        # Top1
-        if neighbors_used:
-            if form.get("metodo") == "top1" and form.get("origen", "todos") == "todos":
-                best_idx, best_sim, best_h = max(neighbors_used, key=lambda t: t[1])
-                hist_candidates = [(i, s, h) for (i, s, h) in neighbors_used
-                                   if str(labeled.loc[i].get("source", "?")) == "historic"]
-                if hist_candidates:
-                    h_idx, h_sim, h_h = max(hist_candidates, key=lambda t: t[1])
-                    estimate_top1 = h_h if (best_sim - h_sim) <= 0.02 else best_h
-                else:
-                    estimate_top1 = best_h
-            else:
-                estimate_top1 = sorted(neighbors_used, key=lambda t: t[1], reverse=True)[0][2]
-        else:
-            estimate_top1 = None
-
-        # Método elegido
-        if form["metodo"] == "top1" and neighbors_used:
-            estimate = estimate_top1
-        else:
-            if USE_FAISS_KNN:
-                estimate, _ = _estimate_with_faiss_knn(
-                    neighbors_used,
-                    min_sim=KNN_MINSIM,
-                    top_k=KNN_TOPK,
-                    p=KNN_P,
-                    dynamic=KNN_DYNAMIC
-                )
-            else:
-                est_soft, _ = _estimate_with_softmax(neighbors_used, temperature=0.20)
-                estimate = est_soft
-
-        # Ajuste por cantidad de campos
-        N = _extract_field_count(form["texto"])
-        if N > 0:
-            cpf = _neighbor_based_cost_per_field(neighbors_used, labeled)
-            alpha = 0.3
-            base = alpha * float(estimate or 0.0) + (1.0 - alpha) * (cpf * N)
-            min_per_field = 0.25
-            estimate = max(base, N * min_per_field)
-
-    # Render ejemplos (top 3) desde los usados
-    examples = []
-    if 'neighbors_used' in locals() and neighbors_used:
-        tag = "desarrollo" if form["tipo"] == "desarrollo" else "implementacion"
-        labeled = load_labeled_dataframe(tag).reset_index(drop=True)
-        top_show = sorted(neighbors_used, key=lambda t: t[1], reverse=True)[:3]
-        for idx, sim, h in top_show:
-            if idx is None or idx < 0 or idx >= len(labeled):
-                continue
-            row = labeled.loc[idx]
-            txt = row["text"]
-            tkt = row["ticket"]
-            src = row.get("source", "?")
-            examples.append({
-                "ticket": tkt,
-                "texto": (txt[:500] + ("..." if len(txt) > 500 else "")),
-                "horas": h,
-                "sim": round(sim, 3),
-                "source": src,
-            })
-
-    ctx = dict(
-        form=form,
-        estimate=estimate,
-        estimate_top1=estimate_top1,
-        neighbors=neighbors_used if 'neighbors_used' in locals() else neighbors,
-        examples=examples,
-        debug_info=debug_info,
-        status=_status_obj(),
-        kb_hits=examples,
-        top_k=len(examples) or 0,
-        estimate_catalog=0.0,
-        estimate_semantic=None,
-        w_catalog=0.5,
-        w_semantic=0.5,
-    )
-    return render_template("index.html", **ctx)
-
-
-@app.route("/retrain", methods=["POST"])
-def retrain():
-    try:
-        counts = train_index_per_type(full=True)
-        msg = (f"Reentrenado. Desarrollo={counts.get('desarrollo',0)}, "
-               f"Implementación={counts.get('implementacion',0)}")
-        flash(msg, "ok")
-    except Exception as e:
-        flash(f"Error al reentrenar: {e}", "err")
-    return redirect(url_for("index"))
-
-
-@app.get("/debug")
-def debug_route():
-    out = []
-    for tag in ["desarrollo", "implementacion"]:
-        try:
-            df = load_labeled_dataframe(tag)
-            counts = df["source"].value_counts(dropna=False).to_dict() if not df.empty else {}
-            samples = {}
-            for src in ["historic", "catalog", "new"]:
-                s = df[df["source"] == src][["ticket", "hours", "text"]].head(2)
-                samples[src] = s.to_dict(orient="records")
-            out.append({"tag": tag, "n": len(df), "counts": counts, "samples": samples})
-        except Exception as e:
-            out.append({"tag": tag, "error": str(e)})
     return app.response_class(
-        response=json.dumps(out, ensure_ascii=False, indent=2),
+        response=json.dumps(result, ensure_ascii=False),
         mimetype="application/json"
     )
 
+@app.post("/api/accept")
+def api_accept():
+    data = request.get_json(force=True, silent=True) or {}
+    row = {
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "tipo": (data.get("tipo") or "").strip().lower(),
+        "texto": (data.get("texto") or "").strip(),
+        "horas": float(data.get("horas") or 0) or 0.0,
+        "top_ticket": (data.get("top_ticket") or "").strip(),
+        "top_sim": float(data.get("top_sim") or 0) or 0.0,
+        "metodo": (data.get("metodo") or "faiss").strip(),
+        "autor": (data.get("autor") or "web").strip(),
+        "comentarios": (data.get("comentarios") or "").strip(),
+    }
+    append_row_safe(row)
+    return jsonify({"ok": True})
 
 if __name__ == "__main__":
-    # Local: python app.py ; En Render usamos gunicorn wsgi:app
-    app.run(host="0.0.0.0", port=7860, debug=True)
+    app.run(debug=True)
