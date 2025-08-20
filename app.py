@@ -1,23 +1,14 @@
-
 from flask import Flask, render_template, request, jsonify
 from pathlib import Path
-import csv, time, json, os
+import csv, time, os, json
 
-# --- Importa tu motor real ---
-from estimator import (
-    EmbeddingsFaissEstimator,
-    load_labeled_dataframe,
-    train_index_per_type,
-    estimate_from_catalog,
-)
+from estimator import EmbeddingsFaissEstimator, load_labeled_dataframe, train_index_per_type, estimate_from_catalog
 
 app = Flask(__name__)
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(Path(__file__).parent / "data")))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 NEW_EST_CSV = DATA_DIR / "estimaciones_nuevas.csv"
-NEW_EST_CSV.parent.mkdir(parents=True, exist_ok=True)
-
 CSV_FIELDS = ["timestamp","tipo","texto","horas","top_ticket","top_sim","metodo","autor","comentarios"]
 
 def append_row_safe(row: dict):
@@ -26,12 +17,11 @@ def append_row_safe(row: dict):
         w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
         if new_file:
             w.writeheader()
-        out = {k: row.get(k, "") for k in CSV_FIELDS}
-        w.writerow(out)
+        w.writerow({k: row.get(k, "") for k in CSV_FIELDS})
 
 def _resolve_tag(tipo: str) -> str:
     t = (tipo or "").strip().lower()
-    if t.startswith("imp") or t == "pstc" or "implement" in t:
+    if t.startswith("imp") or "implement" in t or "pstc" in t:
         return "implementacion"
     return "desarrollo"
 
@@ -45,7 +35,7 @@ def api_health():
 
 @app.get("/api/estimate")
 def api_estimate_get():
-    return {"ok": False, "usage": "Use POST /api/estimate con JSON {tipo, texto}"}, 200
+    return {"ok": False, "usage": "POST /api/estimate con JSON {tipo, texto}."}, 200
 
 @app.post("/api/estimate")
 def api_estimate():
@@ -56,9 +46,6 @@ def api_estimate():
         return jsonify({"ok": False, "error": "texto vacío"}), 400
 
     tag = _resolve_tag(tipo)
-    topk = int(os.environ.get("TOPK", "15"))
-
-    # 1) Carga/entrena índice para el tag (resuelve tu problema de 'tipo')
     est = EmbeddingsFaissEstimator(tag)
     loaded = False
     try:
@@ -66,45 +53,39 @@ def api_estimate():
     except Exception:
         loaded = False
     if not loaded:
-        # Fuerza entrenamiento desde histórico+catálogo+nuevas
         train_index_per_type(full=True)
         est.load()
 
-    # 2) Predicción FAISS
-    est_horas, neigh = est.predict(texto, k=topk)
-
-    # 3) Dataset etiquetado para mostrar top
+    # Predicción y top vecinos
+    horas_est, neighbors = est.predict(texto, k=int(os.environ.get("TOPK", "15")))
     labeled = load_labeled_dataframe(tag).reset_index(drop=True)
 
-    # 4) Arma top 3 presentable
     top = []
-    for (idx, sim, h) in sorted(neigh, key=lambda t: t[1], reverse=True)[:3]:
+    for (idx, sim, h) in sorted(neighbors, key=lambda t: t[1], reverse=True)[:3]:
         if idx is None or idx < 0 or idx >= len(labeled):
             continue
         row = labeled.loc[idx]
         top.append({
-            "ticket": str(row.get("ticket", "")),
+            "ticket": str(row.get("ticket","")),
             "hours": float(h),
             "sim": round(float(sim), 3),
-            "source": str(row.get("source", "")),
-            "text": str(row.get("text", ""))[:480],
+            "source": str(row.get("source","")),
+            "text": str(row.get("text",""))[:480]
         })
 
-    # 5) (Opcional) estimación por catálogo y fusión simple
-    cat_horas = estimate_from_catalog(texto, tag, top_n=3, min_cover=0.35)
-    alpha = float(os.environ.get("HYBRID_ALPHA", "0.8"))  # prioriza FAISS
-    hybrid = round(alpha * float(est_horas or 0.0) + (1.0 - alpha) * float(cat_horas or 0.0), 2)
+    # Mezcla FAISS + catálogo (si aplica en tu estimator)
+    try:
+        cat_horas = estimate_from_catalog(texto, tag, top_n=3, min_cover=0.35)
+    except Exception:
+        cat_horas = 0.0
+    alpha = float(os.environ.get("HYBRID_ALPHA", "0.8"))
+    hybrid = round(alpha * float(horas_est or 0.0) + (1.0 - alpha) * float(cat_horas or 0.0), 2)
 
-    return jsonify({
-        "ok": True,
-        "horas": float(hybrid),
-        "metodo": "faiss+catalog",
-        "top": top
-    })
+    return jsonify({"ok": True, "horas": float(hybrid), "metodo": "faiss+catalog", "top": top})
 
 @app.get("/api/accept")
 def api_accept_get():
-    return {"ok": False, "usage": "Use POST /api/accept para guardar una estimación"}, 200
+    return {"ok": False, "usage": "POST /api/accept para guardar una estimación."}, 200
 
 @app.post("/api/accept")
 def api_accept():

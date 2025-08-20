@@ -204,15 +204,10 @@ def load_labeled_dataframe(tag: str) -> pd.DataFrame:
     if not frames:
         return pd.DataFrame(columns=["text","hours","ticket","source"])
 
-    # Filter non-empty frames to avoid pandas FutureWarning
-    _frames = [f for f in frames if f is not None and isinstance(f, pd.DataFrame) and not f.empty]
-    if len(_frames) == 0:
-        return pd.DataFrame(columns=[\"text\",\"hours\",\"ticket\",\"source\"])
-    df = pd.concat(_frames, ignore_index=True)
-    if not df.empty:
-        df = df.loc[:, df.notna().any(axis=0)]
-        df = df.dropna(subset=[\"text\"]).reset_index(drop=True)
-    return df[[\"text\",\"hours\",\"ticket\",\"source\"]]
+    df = pd.concat(frames, ignore_index=True)
+    df = df.dropna(subset=["text"]).reset_index(drop=True)
+    return df[["text","hours","ticket","source"]]
+
 # ---------- Estimator (API esperada por app.py) ----------
 class EmbeddingsFaissEstimator:
     def __init__(self, tag: str):
