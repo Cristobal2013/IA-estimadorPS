@@ -4,7 +4,6 @@ configuracion plantilla full (reglas visualizacion),7.0
 Oficina de partes 2.0,6.0
 Habilitacion plantillas,3.0
 Upgrade Release (QA y PRD),16.0
-Testing y Go live,10.0
 Instalacion EGW APP + BBDD (QA/PRD),16.0
 Creacion empresa egw y eServer (QA/PRD),16.0
 Configuracion impresoras (10),5.0
@@ -17,22 +16,18 @@ Migracion APP/Storage (3 servidores),30.0
 Instalacion Postgres 12.8 ( 3 servidores),12.0
 Migracion Data BBDD ( 3 servidores),30.0
 Configuraciones,10.0
-Testing/Hypercare,10.0
 Habilitar emision GUIA (52) QA y PRD,6.0
 Diseño y configuracion plantillas,4.0
-Testing/Hypercare,4.0
 Validación configuración ambiente UAT nuevo servidor correo,2.0
 Apoyo en pruebas en UAT - 2 semanas,12.0
 Validación configuración ambiente PRD nuevo servidor correo,2.0
 Apoyo entrada a PRD - 1 semana,8.0
-Testing/Hypercare,6.0
 Certificacion set exportacion + set basico,12.0
 Diseño,6.0
 Instalacion y configuracion,3.0
 Actualizacion Release egw (QA y PRD),18.0
 controller (QA y PRD),10.0
 Apoyo entrada a PRD - 1 semana,8.0
-Testing/Hypercare,8.0
 Instalacion EGW APP + BBDD (QA/PRD),16.0
 Creacion empresa egw y eServer (QA/PRD),16.0
 Configuracion impresoras (10),5.0
@@ -57,7 +52,6 @@ Actualizacion + Migracion 4 egw (2 QA y 2 PRD),40.0
 Migracion BD Win to Linux (QA y PRD),20.0
 Config empresa en eserver y filtro,10.0
 QA - Migracion de empresas y configuracion EGWS (BO y POS),14.0
-testing QA,7.0
 PRD - Migracion de empresas y configuraciones de 4 egws (1 BO y 3 POS) a 3 egw (1 BO y 2 POS),24.0
 Modificaciones Filtro (estimativo),15.0
 Apoyo config POS y Hypercare,15.0
@@ -74,24 +68,19 @@ Hypercare,7.0
 Replicacion de egw PRD a nuevo EGW,10.0
 Actualizacion release (PRD),10.0
 Configuraciones adicionales,6.0
-Testing + Hypercare,10.0
 Instalacion filtro (PRD y QA),5.0
 Apoyo cutover,2.0
-Testing + Hypercare,5.0
 Migracion egw POS (BD + APP),15.0
 Migracion egw BO (BD + APP),15.0
 Apoyo cutover,2.0
-Testing + Hypercare,7.0
 Instalacion egw (app + BD) y Creacion empresa,10.0
 Creacion empresa Eserver,3.0
 Certificacion Boletas + set basico,11.0
 RTC + config Boletas envio SII,7.0
 Instalacion 1 Piloto PRD + Manual instalacion,5.0
-Testing + Hypercare + (apoyo rollout),14.0
 Creacion empresa Eserver,4.0
 Certificacion Boletas + set basico + set exportacion,15.0
 Diseño plantillas,8.0
-Testing + Hypercare,3.0
 Instalacion egw (app + BD) y Creacion empresa,10.0
 Creacion empresa Eserver + configuraciones adicionales,5.0
 Diseño Set basico + GD,7.0
@@ -99,15 +88,12 @@ Configuracion impresoras,10.0
 "Modulo Cesion, Reclamacion + Printer",5.0
 Instalacion 2 epos (1 PRD + 1 QA),5.0
 Migracion XML,60.0
-Testing + Hypercare,20.0
 Creacion empresa EGW (QA/PRD),8.0
 Configuraciones Adicionales,5.0
-Testing/Hypercare,7.0
 Habilitar módulo de RECLAMACIONES con integración mediante WebServices. QA/PRD,6.0
 Envío de los documentos recepcionados validados por el SII (Aceptados y aceptados con reparo) a SFTP del cliente,1.0
 Habilitar Recepción Avanzada.,1.0
 Configurar Carta (Módulo de Reclamaciones),1.0
-Testing/hypercare,3.0
 configuracion empresa POS eserver (QA/PRD),10.0
 Diseño,5.0
 Habilitacion 1 POS QA,1.5
@@ -115,29 +101,23 @@ Habilitacion 6 POS PRD,6.0
 Capacitacion POS,2.0
 Configuracion boleta 1 a 1,4.0
 Manual,1.0
-Testing/Hypercare,6.0
 configuracion empresa eserver (QA/PRD),8.0
 Diseño,8.0
 Configuracion boleta 1 a 1,4.0
-Testing/Hypercare,5.0
 Configuracion empresa QA y PRD (egw/eserv),10.0
 Certificacion set basico + boletas,9.0
 Configuraciones adicionales + envio boletas,6.0
 Diseño plantillas personalizadas,9.0
-Testing/hypercare,5.0
 Configuraciones ASP + agentes,3.0
 Configuraciones en FM,4.0
 Hypercare,4.0
 Configuraciones eserver,3.0
 Configuracion filtro,1.0
 Regularizacion de folios,3.0
-Testing/hypercare,5.0
 Migracion APP (QA/PRD),10.0
 Migracion DDBB (QA/PRD),12.0
-Testing/hypercare,5.0
 Migracion APP (QA/PRD),8.0
 Migracion DDBB (QA/PRD),8.0
-Testing/hypercare,5.0
 Creacion empresa Eserver + configuraciones adicionales,5.0
 Certificacion set basico + adicional,7.0
 Diseño,7.0
@@ -176,7 +156,6 @@ Diseño,5.0
 "Modulo Cesion, Recepcion avanzada",6.0
 Diseño,3.0
 "Config filtro, variables y reglas",4.0
-Testing/hypercare,1.0
 Total,8.0
 Diseño boletas BO/manual,5.0
 Certificacion Set Boletas,4.0
@@ -319,7 +298,6 @@ Capacitacion instalacion componente,2.0
 Migracion APP (QA/PRD),6.0
 Migracion DB PRD,6.0
 Migracion DB UAT,3.0
-Apoyo (Testing/Hypercare),10.0
 Instalacion epos QA,1.0
 Instalacion epos PRD,1.0
 Migracion DB UAT,3.0
@@ -381,11 +359,9 @@ Instalacion 3 POS,3.0
 Capacitacion/induccion/manual instalacion POS,3.0
 Migracion APP (3 egw),10.0
 Migracion data y configuraciones,15.0
-testing,10.0
 "Instalacion APP (3 egw - 2 Pos, 1 BO)",15.0
 "Instalacion BD (3 egw - 2 Pos, 1 BO)",15.0
 Migracion data y configuraciones,20.0
-testing,14.0
 Extraccion y instalacion eserver/egw,2.0
 Modificacion Boleta Afecta,2.0
 Migracion configuraciones 2 Ruts QA,5.0
@@ -420,7 +396,6 @@ Instalacion APP - nuevo Release (QA/PRD),8.0
 Instalacion PostgreSQL (QA/PRD),10.0
 Migracion data BBDD y Storage (QA/PRD),10.0
 HH desarrollo,5.0
-testing,7.0
 Configuraciones UAT,1.0
 pruebas UAT,1.0
 Configuracion PRD,1.0
@@ -428,7 +403,6 @@ prueba y soporte,2.0
 Configuracion tags boleta facturador manual (UAT/PRD),1.0
 Cambios en plantillas de boleta,4.0
 instalacion plantillas,1.0
-testing/hypercare,2.0
 Cambios en plantillas,5.0
 Certificacion Factura de compra,5.0
 Creacion plantilla FC,2.0
