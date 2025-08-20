@@ -39,105 +39,112 @@
   </div>
 
   <script>
-  const $ = sel => document.querySelector(sel);
-  const resBox = $("#live-result");
-  const btn = $("#btn-estimar");
-  const status = $("#status");
-  let lastResult = null;
+  (function(){
+    const $ = sel => document.querySelector(sel);
+    const resBox = $("#live-result");
+    const btn = $("#btn-estimar");
+    const status = $("#status");
+    let lastResult = null;
 
-  function setBusy(b){
-    btn.disabled = b;
-    status.textContent = b ? "Estimando..." : "";
-  }
-  function fmt(n){ return Number(n || 0).toFixed(2); }
-
-  async function doEstimate(){
-    const payload = {
-      tipo: $("#tipo").value,
-      metodo: $("#metodo").value,
-      texto: $("#texto").value.trim()
-    };
-    if(!payload.texto){
-      alert("Ingresa una solicitud.");
-      return;
+    function setBusy(b){
+      btn.disabled = b;
+      status.textContent = b ? "Estimando..." : "";
     }
-    try{
-      setBusy(true);
-      const r = await fetch("/api/estimate", {
-        method: "POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify(payload)
-      });
-      if(!r.ok){
-        const msg = await r.text();
-        throw new Error("HTTP " + r.status + ": " + msg);
+    function fmt(n){ return Number(n || 0).toFixed(2); }
+
+    function renderRows(rows){
+      if(!Array.isArray(rows) || rows.length === 0) return "";
+      let out = "";
+      for(let i=0;i<Math.min(3, rows.length);i++){
+        const t = rows[i] || {};
+        out += "<tr>"
+             + "<td>" + (i+1) + "</td>"
+             + "<td><span class=\"badge badge-tipo\">" + (t.tipo||"") + "</span> " + (t.ticket||"") + "</td>"
+             + "<td>" + fmt(t.hours) + "</td>"
+             + "<td>" + ( (t.sim!=null) ? Number(t.sim).toFixed(3) : "" ) + "</td>"
+             + "<td class=\"wrap\">" + (t.text||"") + "</td>"
+             + "</tr>";
       }
-      const data = await r.json();
-      lastResult = data;
-      const det = data.detalle || {};
-      const showAlpha = (data.metodo === "faiss+catalog" && det.alpha != null);
-      resBox.innerHTML = `
-        <h3>Estimación</h3>
-        <p><span class="pill">\${fmt(data.horas)} h</span>
-           <small>(\${data.metodo})</small></p>
-        <p class="sub">FAISS: \${fmt(det.faiss)} h · Catálogo: \${fmt(det.catalogo)} h · Final (sin redondeo): \${fmt(det.final_sin_redondeo)} h\${showAlpha ? ' · α='+det.alpha : ''}</p>
-        \${Array.isArray(data.top) ? `
-          <h4>Coincidencias</h4>
-          <table class="tbl">
-            <thead><tr><th>#</th><th>Ticket / Tipo</th><th>Horas</th><th>Similitud</th><th>Descripción</th></tr></thead>
-            <tbody>
-            \${data.top.slice(0,3).map((t,i)=>`
-              <tr>
-                <td>\${i+1}</td>
-                <td><span class="badge badge-tipo">\${t.tipo || ""}</span> \${t.ticket || ""}</td>
-                <td>\${fmt(t.hours)}</td>
-                <td>\${(t.sim || 0).toFixed(3)}</td>
-                <td class="wrap">\${t.text || ""}</td>
-              </tr>`).join("")}
-            </tbody>
-          </table>
-        ` : ""}
-        <div class="actions-row">
-          <button id="btn-accept">Guardar esta estimación</button>
-        </div>
-      `;
-      resBox.style.display = "block";
-
-      $("#btn-accept")?.addEventListener("click", async () => {
-        const top1 = (lastResult?.top || [])[0] || {};
-        const payload2 = {
-          tipo: $("#tipo").value,
-          texto: $("#texto").value.trim(),
-          horas: lastResult?.horas || 0,
-          top_ticket: top1.ticket || "",
-          top_sim: top1.sim || 0,
-          metodo: lastResult?.metodo || $("#metodo").value,
-          autor: "web",
-          comentarios: ""
-        };
-        try{
-          const r2 = await fetch("/api/accept", {
-            method:"POST",
-            headers: {"Content-Type":"application/json"},
-            body: JSON.stringify(payload2)
-          });
-          const j2 = await r2.json().catch(()=>({ok:false}));
-          if (j2.ok) { alert("✅ Estimación guardada."); }
-          else { alert("⚠️ No se pudo guardar."); }
-        }catch(e){
-          alert("Error guardando: " + (e?.message || e));
-        }
-      });
-    }catch(e){
-      resBox.style.display = "block";
-      resBox.innerHTML = `<div class="error">⚠️ Error al estimar: \${e?.message || e}</div>`;
-      console.error(e);
-    }finally{
-      setBusy(false);
+      return out;
     }
-  }
 
-  btn.addEventListener("click", doEstimate);
+    async function doEstimate(){
+      const payload = {
+        tipo: $("#tipo").value,
+        metodo: $("#metodo").value,
+        texto: $("#texto").value.trim()
+      };
+      if(!payload.texto){
+        alert("Ingresa una solicitud.");
+        return;
+      }
+      try{
+        setBusy(true);
+        const r = await fetch("/api/estimate", {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify(payload)
+        });
+        if(!r.ok){
+          const msg = await r.text();
+          throw new Error("HTTP " + r.status + ": " + msg);
+        }
+        const data = await r.json();
+        lastResult = data;
+        const det = data.detalle || {};
+        const alphaTxt = (data.metodo === "faiss+catalog" && det.alpha != null) ? " · α=" + det.alpha : "";
+        let html = "";
+        html += "<h3>Estimación</h3>";
+        html += "<p><span class=\"pill\">" + fmt(data.horas) + " h</span> <small>(" + (data.metodo||"") + ")</small></p>";
+        html += "<p class=\"sub\">FAISS: " + fmt(det.faiss) + " h · Catálogo: " + fmt(det.catalogo) + " h · Final (sin redondeo): " + fmt(det.final_sin_redondeo) + " h" + alphaTxt + "</p>";
+        if(Array.isArray(data.top)){
+          html += "<h4>Coincidencias</h4>";
+          html += "<table class=\"tbl\"><thead><tr><th>#</th><th>Ticket / Tipo</th><th>Horas</th><th>Similitud</th><th>Descripción</th></tr></thead>";
+          html += "<tbody>" + renderRows(data.top) + "</tbody></table>";
+        }
+        html += "<div class=\"actions-row\"><button id=\"btn-accept\">Guardar esta estimación</button></div>";
+        resBox.innerHTML = html;
+        resBox.style.display = "block";
+
+        const btnSave = document.getElementById("btn-accept");
+        if(btnSave){
+          btnSave.addEventListener("click", async function(){
+            const top1 = (lastResult && lastResult.top && lastResult.top[0]) ? lastResult.top[0] : {};
+            const payload2 = {
+              tipo: $("#tipo").value,
+              texto: $("#texto").value.trim(),
+              horas: lastResult ? (lastResult.horas || 0) : 0,
+              top_ticket: top1.ticket || "",
+              top_sim: top1.sim || 0,
+              metodo: (lastResult && lastResult.metodo) ? lastResult.metodo : $("#metodo").value,
+              autor: "web",
+              comentarios: ""
+            };
+            try{
+              const r2 = await fetch("/api/accept", {
+                method:"POST",
+                headers: {"Content-Type":"application/json"},
+                body: JSON.stringify(payload2)
+              });
+              const j2 = await r2.json().catch(()=>({ok:false}));
+              if (j2.ok) { alert("✅ Estimación guardada."); }
+              else { alert("⚠️ No se pudo guardar."); }
+            }catch(e){
+              alert("Error guardando: " + (e && e.message ? e.message : e));
+            }
+          });
+        }
+      }catch(e){
+        resBox.style.display = "block";
+        resBox.innerHTML = "<div class=\"error\">⚠️ Error al estimar: " + (e && e.message ? e.message : e) + "</div>";
+        console.error(e);
+      }finally{
+        setBusy(false);
+      }
+    }
+
+    btn.addEventListener("click", doEstimate);
+  })();
   </script>
 </body>
 </html>
