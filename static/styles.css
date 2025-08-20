@@ -13,6 +13,9 @@ button:hover:not([disabled]) {background: #1158c7;}
 .tbl th, .tbl td {border: 1px solid #e5e7eb; padding: 8px; text-align: left; vertical-align: top;}
 .tbl th {background: #f3f4f6;}
 .pill {background: #1f6feb; color: white; padding: 4px 10px; border-radius: 999px;}
+.badge {display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; margin-right: 6px; line-height: 1.2;}
+.badge-tipo {background: #e0f2fe; color: #075985; border: 1px solid #bae6fd;}
+.sub {color: #4b5563; margin-top: -8px; margin-bottom: 6px;}
 .wrap {white-space: normal; word-wrap: break-word;}
 .actions {text-align: right;}
 .actions-row {margin-top: 15px; text-align: right;}

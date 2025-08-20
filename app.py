@@ -1,6 +1,7 @@
+
 from flask import Flask, render_template, request, jsonify
 from pathlib import Path
-import csv, time, os, json
+import csv, time, os, json, math, re
 
 from estimator import EmbeddingsFaissEstimator, load_labeled_dataframe, train_index_per_type, estimate_from_catalog
 
@@ -25,6 +26,12 @@ def _resolve_tag(tipo: str) -> str:
         return "implementacion"
     return "desarrollo"
 
+def _infer_tipo_from_ticket(ticket: str, default_tag: str) -> str:
+    t = (ticket or "").upper().strip()
+    if t.startswith("CESQ"): return "CESQ"
+    if t.startswith("PSTC"): return "PSTC"
+    return "CESQ" if default_tag == "desarrollo" else "PSTC"
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -33,14 +40,11 @@ def index():
 def api_health():
     return {"ok": True}
 
-@app.get("/api/estimate")
-def api_estimate_get():
-    return {"ok": False, "usage": "POST /api/estimate con JSON {tipo, texto}."}, 200
-
 @app.post("/api/estimate")
 def api_estimate():
     data = request.get_json(force=True, silent=True) or {}
     tipo = data.get("tipo") or "desarrollo"
+    metodo = (data.get("metodo") or "faiss+catalog").strip().lower()
     texto = (data.get("texto") or "").strip()
     if not texto:
         return jsonify({"ok": False, "error": "texto vacío"}), 400
@@ -56,36 +60,60 @@ def api_estimate():
         train_index_per_type(full=True)
         est.load()
 
-    # Predicción y top vecinos
-    horas_est, neighbors = est.predict(texto, k=int(os.environ.get("TOPK", "15")))
+    horas_faiss, neighbors = est.predict(texto, k=int(os.environ.get("TOPK", "15")))
     labeled = load_labeled_dataframe(tag).reset_index(drop=True)
+
+    def _to_float(x):
+        try:
+            return float(x)
+        except Exception:
+            return 0.0
 
     top = []
     for (idx, sim, h) in sorted(neighbors, key=lambda t: t[1], reverse=True)[:3]:
         if idx is None or idx < 0 or idx >= len(labeled):
             continue
         row = labeled.loc[idx]
+        hours_row = row.get("hours", 0)
+        hours_val = _to_float(h if h not in (None, "", 0) else hours_row)
+        tk = str(row.get("ticket",""))
         top.append({
-            "ticket": str(row.get("ticket","")),
-            "hours": float(h),
+            "ticket": tk,
+            "tipo": _infer_tipo_from_ticket(tk, tag),
+            "hours": hours_val,
             "sim": round(float(sim), 3),
             "source": str(row.get("source","")),
             "text": str(row.get("text",""))[:480]
         })
 
-    # Mezcla FAISS + catálogo (si aplica en tu estimator)
+    # Estimación por catálogo (puede no existir en algunos casos)
     try:
-        cat_horas = estimate_from_catalog(texto, tag, top_n=3, min_cover=0.35)
+        horas_catalog = estimate_from_catalog(texto, tag, top_n=3, min_cover=0.35)
     except Exception:
-        cat_horas = 0.0
+        horas_catalog = 0.0
+
+    metodo_norm = metodo if metodo in {"faiss","catalog","faiss+catalog"} else "faiss+catalog"
     alpha = float(os.environ.get("HYBRID_ALPHA", "0.8"))
-    hybrid = round(alpha * float(horas_est or 0.0) + (1.0 - alpha) * float(cat_horas or 0.0), 2)
+    if metodo_norm == "faiss":
+        hybrid = float(horas_faiss or 0.0)
+    elif metodo_norm == "catalog":
+        hybrid = float(horas_catalog or 0.0)
+    else:
+        hybrid = alpha * float(horas_faiss or 0.0) + (1.0 - alpha) * float(horas_catalog or 0.0)
 
-    return jsonify({"ok": True, "horas": float(hybrid), "metodo": "faiss+catalog", "top": top})
-
-@app.get("/api/accept")
-def api_accept_get():
-    return {"ok": False, "usage": "POST /api/accept para guardar una estimación."}, 200
+    resp = {
+        "ok": True,
+        "horas": float(math.ceil(hybrid)),  # redondeo hacia arriba
+        "metodo": metodo_norm,
+        "detalle": {
+            "faiss": float(horas_faiss or 0.0),
+            "catalogo": float(horas_catalog or 0.0),
+            "final_sin_redondeo": float(round(hybrid, 2)),
+            "alpha": alpha if metodo_norm == "faiss+catalog" else None
+        },
+        "top": top
+    }
+    return jsonify(resp)
 
 @app.post("/api/accept")
 def api_accept():

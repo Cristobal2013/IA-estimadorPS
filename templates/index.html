@@ -18,6 +18,14 @@
         </select>
       </div>
       <div class="field">
+        <label for="metodo">Método</label>
+        <select id="metodo" name="metodo">
+          <option value="faiss+catalog">FAISS + Catálogo (recomendado)</option>
+          <option value="faiss">Solo FAISS (vecinos)</option>
+          <option value="catalog">Solo Catálogo</option>
+        </select>
+      </div>
+      <div class="field">
         <label for="texto">Solicitud</label>
         <textarea id="texto" placeholder="Describe el requerimiento..." rows="5"></textarea>
       </div>
@@ -41,10 +49,12 @@
     btn.disabled = b;
     status.textContent = b ? "Estimando..." : "";
   }
+  function fmt(n){ return Number(n || 0).toFixed(2); }
 
   async function doEstimate(){
     const payload = {
       tipo: $("#tipo").value,
+      metodo: $("#metodo").value,
       texto: $("#texto").value.trim()
     };
     if(!payload.texto){
@@ -64,22 +74,25 @@
       }
       const data = await r.json();
       lastResult = data;
+      const det = data.detalle || {};
+      const showAlpha = (data.metodo === "faiss+catalog" && det.alpha != null);
       resBox.innerHTML = `
         <h3>Estimación</h3>
-        <p><span class="pill">${Number(data.horas || 0).toFixed(2)} h</span>
-           <small>(${data.metodo || "faiss+catalog"})</small></p>
-        ${Array.isArray(data.top) ? `
+        <p><span class="pill">\${fmt(data.horas)} h</span>
+           <small>(\${data.metodo})</small></p>
+        <p class="sub">FAISS: \${fmt(det.faiss)} h · Catálogo: \${fmt(det.catalogo)} h · Final (sin redondeo): \${fmt(det.final_sin_redondeo)} h\${showAlpha ? ' · α='+det.alpha : ''}</p>
+        \${Array.isArray(data.top) ? `
           <h4>Coincidencias</h4>
           <table class="tbl">
-            <thead><tr><th>#</th><th>Ticket</th><th>Horas</th><th>Similitud</th><th>Descripción</th></tr></thead>
+            <thead><tr><th>#</th><th>Ticket / Tipo</th><th>Horas</th><th>Similitud</th><th>Descripción</th></tr></thead>
             <tbody>
-            ${data.top.slice(0,3).map((t,i)=>`
+            \${data.top.slice(0,3).map((t,i)=>`
               <tr>
-                <td>${i+1}</td>
-                <td>${t.ticket || ""}</td>
-                <td>${t.hours ?? ""}</td>
-                <td>${(t.sim || 0).toFixed(3)}</td>
-                <td class="wrap">${t.text || ""}</td>
+                <td>\${i+1}</td>
+                <td><span class="badge badge-tipo">\${t.tipo || ""}</span> \${t.ticket || ""}</td>
+                <td>\${fmt(t.hours)}</td>
+                <td>\${(t.sim || 0).toFixed(3)}</td>
+                <td class="wrap">\${t.text || ""}</td>
               </tr>`).join("")}
             </tbody>
           </table>
@@ -98,7 +111,7 @@
           horas: lastResult?.horas || 0,
           top_ticket: top1.ticket || "",
           top_sim: top1.sim || 0,
-          metodo: lastResult?.metodo || "faiss+catalog",
+          metodo: lastResult?.metodo || $("#metodo").value,
           autor: "web",
           comentarios: ""
         };
@@ -117,7 +130,7 @@
       });
     }catch(e){
       resBox.style.display = "block";
-      resBox.innerHTML = `<div class="error">⚠️ Error al estimar: ${e?.message || e}</div>`;
+      resBox.innerHTML = `<div class="error">⚠️ Error al estimar: \${e?.message || e}</div>`;
       console.error(e);
     }finally{
       setBusy(false);
