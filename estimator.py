@@ -24,7 +24,7 @@ os.environ.setdefault("HF_HOME", str(MODEL_DIR / "hf_cache"))
 
 CATALOGO_CESQ  = DATA_DIR / "catalogo_cesq.csv"
 CATALOGO_PSTC  = DATA_DIR / "catalogo_pstc.csv"
-NEW_EST_CSVV    = DATA_DIR / "estimaciones_nuevas.csv"
+NEW_EST_CSV    = DATA_DIR / "estimaciones_nuevas.csv"
 
 
 MODEL_NAME  = os.environ.get("EMB_MODEL", "sentence-transformers/paraphrase-MiniLM-L3-v2")
@@ -183,7 +183,7 @@ def load_labeled_dataframe(tag: str) -> pd.DataFrame:
         frames.append(_make_rows(dfc, tcol, hcol, None, source="catalog"))
 
     # 3) Nuevas confirmaciones del usuario (acepta .csv o .cs)
-    new_path = NEW_EST_CSVV if NEW_EST_CSVV.exists() else (NEW_EST_CSV if NEW_EST_CSV.exists() else None)
+    new_path = NEW_EST_CSV if NEW_EST_CSV.exists() else (NEW_EST_CS if NEW_EST_CS.exists() else None)
     if new_path:
         dfn = _read_csv_smart(new_path)
         if "tipo" in dfn.columns:
@@ -204,22 +204,15 @@ def load_labeled_dataframe(tag: str) -> pd.DataFrame:
     if not frames:
         return pd.DataFrame(columns=["text","hours","ticket","source"])
 
-    # Filter out empty or all-NA frames to avoid FutureWarning in future pandas versions
-_frames = [f for f in frames if f is not None]
-_frames = [f for f in _frames if not f.empty]
-# Drop all-NA columns in each frame defensively
-_frames = [f.loc[:, f.notna().any(axis=0)] if not f.empty else f for f in _frames]
-if len(_frames) == 0:
-    df = pd.DataFrame()
-else:
+    # Filter non-empty frames to avoid pandas FutureWarning
+    _frames = [f for f in frames if f is not None and isinstance(f, pd.DataFrame) and not f.empty]
+    if len(_frames) == 0:
+        return pd.DataFrame(columns=[\"text\",\"hours\",\"ticket\",\"source\"])
     df = pd.concat(_frames, ignore_index=True)
-    # Ensure we keep only columns that have at least one non-NA value across the concat
     if not df.empty:
         df = df.loc[:, df.notna().any(axis=0)]
-
-    df = df.dropna(subset=["text"]).reset_index(drop=True)
-    return df[["text","hours","ticket","source"]]
-
+        df = df.dropna(subset=[\"text\"]).reset_index(drop=True)
+    return df[[\"text\",\"hours\",\"ticket\",\"source\"]]
 # ---------- Estimator (API esperada por app.py) ----------
 class EmbeddingsFaissEstimator:
     def __init__(self, tag: str):
