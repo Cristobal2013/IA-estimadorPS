@@ -92,7 +92,7 @@ def _read_csv_smart(path: Path) -> pd.DataFrame:
     for enc in encodings:
         for sep in seps:
             try:
-                df = pd.read_csv(path, encoding=enc, sep=sep, engine="python", low_memory=False)
+                df = pd.read_csv(path, encoding=enc, sep=sep, engine=\"python\", low_memory=False, on_bad_lines='skip')
                 if df.shape[1] >= 2 and len(df) >= 1:
                     df = _normalize_cols(df)
                     if best is None or df.shape[1] > best.shape[1]:
@@ -101,7 +101,7 @@ def _read_csv_smart(path: Path) -> pd.DataFrame:
                 continue
     if best is not None:
         return best
-    return _normalize_cols(pd.read_csv(path, encoding="utf-8", low_memory=False))
+    return _normalize_cols(pd.read_csv(path, encoding=\"utf-8\", low_memory=False, on_bad_lines='skip'))
 
 _TEXT_HINTS   = ["summary","resumen","descripcion","descripción","title","título","nombre","text","nombre tarea"]
 _HOURS_HINTS  = ["original estimate","horas","hours","estimado","estimacion","estimación","hh","hhs"]
