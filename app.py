@@ -1,4 +1,4 @@
-# app.py — orden de import seguro + app expuesta a nivel módulo
+# app.py — orden de import seguro + app expuesta a nivel módulo (FAISS-kNN weighting)
 
 from flask import Flask, render_template, request, redirect, url_for, flash
 from pathlib import Path
@@ -41,6 +41,16 @@ from estimator import (
     load_labeled_dataframe,
 )
 
+# =========================
+# Config de FAISS-kNN (env)
+# =========================
+USE_FAISS_KNN = os.environ.get("USE_FAISS_KNN", "1") == "1"   # usa kNN en lugar de softmax
+KNN_TOPK      = int(os.environ.get("KNN_TOPK", "8"))          # vecinos máx tras filtro
+KNN_MINSIM    = float(os.environ.get("KNN_MINSIM", "0.12"))   # umbral de similitud mínimo
+KNN_P         = float(os.environ.get("KNN_P", "2.0"))         # potencia para pesos (s-τ)^p
+KNN_DYNAMIC   = os.environ.get("KNN_DYNAMIC", "1") == "1"     # τ dinámico = max(minsim, 0.8*sim_top)
+
+
 # -------------------------
 # Helpers
 # -------------------------
@@ -68,10 +78,64 @@ def _neighbor_based_cost_per_field(neighbors, labeled_df) -> float:
     return 0.35  # fallback
 
 
+# ---------- NUEVO: recorte + FAISS-kNN ----------
+def _prepare_neighbors_for_estimation(neighbors, top_k=KNN_TOPK, min_sim=KNN_MINSIM):
+    """
+    Ordena por similitud desc, filtra por umbral y limita a top_k.
+    Evita que muchos vecinos con s≈0 y horas grandes inflen la estimación.
+    """
+    if not neighbors:
+        return []
+    nn = sorted(neighbors, key=lambda t: t[1], reverse=True)
+    nn = [t for t in nn if float(t[1]) >= float(min_sim)]
+    return nn[:int(top_k)]
+
+
+def _estimate_with_faiss_knn(neighbors, min_sim=KNN_MINSIM, top_k=KNN_TOPK, p=KNN_P, dynamic=KNN_DYNAMIC):
+    """
+    Estimación FAISS-kNN (sin softmax):
+      - τ (umbral) fijo o dinámico respecto al top (0.8 * sim_top)
+      - vecinos útiles: s >= τ, limitado a top_k
+      - pesos = (s - τ)^p normalizados
+    """
+    if not neighbors:
+        return 0.0, []
+
+    # Ordenar y obtener top sim
+    nn = sorted(neighbors, key=lambda t: t[1], reverse=True)
+    sims = [float(s) for _, s, _ in nn]
+    top_sim = sims[0] if sims else 0.0
+
+    # Umbral τ
+    tau = max(min_sim, 0.8 * top_sim) if dynamic else min_sim
+
+    # Selección
+    sel = [(i, s, h) for (i, s, h) in nn if float(s) >= float(tau)][:int(top_k)]
+    if not sel:
+        # Fallback: top1 si nada supera τ
+        return nn[0][2] if nn else 0.0, []
+
+    # Pesos
+    ws = [max(0.0, (float(s) - tau)) ** float(p) for _, s, _ in sel]
+    Z = sum(ws)
+    if Z <= 0:
+        return sel[0][2], []
+    wnorm = [w / Z for w in ws]
+
+    hours = [float(h) for _, _, h in sel]
+    estimate = sum(w * h for w, h in zip(wnorm, hours))
+    return estimate, wnorm
+
+
+# (Se mantiene por compatibilidad si desactivas USE_FAISS_KNN=0)
 def _estimate_with_softmax(neighbors, temperature=0.20):
     if not neighbors:
         return 0.0, []
     sims = [max(0.0, float(s)) for _, s, _ in neighbors]
+    # rebase para aplanar colas (mejor comportamiento si alguien usa softmax)
+    if sims:
+        max_s = max(sims)
+        sims = [s - max_s for s in sims]
     exps = [math.exp(s / temperature) for s in sims]
     Z = sum(exps) or 1.0
     weights = [e / Z for e in exps]
@@ -224,21 +288,35 @@ def index():
                 "text": str(labeled.loc[i].get("text", ""))[:180]
             })
 
+        # Filtrar por origen
         neighbors = _filter_neighbors_by_source(neighbors_all, labeled, form.get("origen", "todos"))
+
+        # Recorte para cálculo (evita colas con similitud baja)
+        neighbors_used = _prepare_neighbors_for_estimation(neighbors, top_k=KNN_TOPK, min_sim=KNN_MINSIM)
+
         debug_info = {
             "tipo": tag,
             "texto": form.get("texto", ""),
             "origen": form.get("origen", "todos"),
             "k_all": len(neighbors_all),
-            "k_used": len(neighbors),
+            "k_filtered": len(neighbors),
+            "k_used_after_prune": len(neighbors_used),
             "counts_all": counts_all,
             "neighbors_all": rows_all[:12],
+            "faiss_params": {
+                "USE_FAISS_KNN": USE_FAISS_KNN,
+                "KNN_TOPK": KNN_TOPK,
+                "KNN_MINSIM": KNN_MINSIM,
+                "KNN_P": KNN_P,
+                "KNN_DYNAMIC": KNN_DYNAMIC,
+            }
         }
 
-        if neighbors:
+        # Top1
+        if neighbors_used:
             if form.get("metodo") == "top1" and form.get("origen", "todos") == "todos":
-                best_idx, best_sim, best_h = max(neighbors, key=lambda t: t[1])
-                hist_candidates = [(i, s, h) for (i, s, h) in neighbors
+                best_idx, best_sim, best_h = max(neighbors_used, key=lambda t: t[1])
+                hist_candidates = [(i, s, h) for (i, s, h) in neighbors_used
                                    if str(labeled.loc[i].get("source", "?")) == "historic"]
                 if hist_candidates:
                     h_idx, h_sim, h_h = max(hist_candidates, key=lambda t: t[1])
@@ -246,30 +324,42 @@ def index():
                 else:
                     estimate_top1 = best_h
             else:
-                estimate_top1 = sorted(neighbors, key=lambda t: t[1], reverse=True)[0][2]
+                estimate_top1 = sorted(neighbors_used, key=lambda t: t[1], reverse=True)[0][2]
         else:
             estimate_top1 = None
 
-        if form["metodo"] == "top1" and neighbors:
+        # Método elegido
+        if form["metodo"] == "top1" and neighbors_used:
             estimate = estimate_top1
         else:
-            est_soft, _ = _estimate_with_softmax(neighbors, temperature=0.20)
-            estimate = est_soft
+            if USE_FAISS_KNN:
+                estimate, _ = _estimate_with_faiss_knn(
+                    neighbors_used,
+                    min_sim=KNN_MINSIM,
+                    top_k=KNN_TOPK,
+                    p=KNN_P,
+                    dynamic=KNN_DYNAMIC
+                )
+            else:
+                est_soft, _ = _estimate_with_softmax(neighbors_used, temperature=0.20)
+                estimate = est_soft
 
+        # Ajuste por cantidad de campos
         N = _extract_field_count(form["texto"])
         if N > 0:
-            cpf = _neighbor_based_cost_per_field(neighbors, labeled)
+            cpf = _neighbor_based_cost_per_field(neighbors_used, labeled)
             alpha = 0.3
             base = alpha * float(estimate or 0.0) + (1.0 - alpha) * (cpf * N)
             min_per_field = 0.25
             estimate = max(base, N * min_per_field)
 
+    # Render ejemplos (top 3) desde los usados
     examples = []
-    if neighbors:
+    if 'neighbors_used' in locals() and neighbors_used:
         tag = "desarrollo" if form["tipo"] == "desarrollo" else "implementacion"
         labeled = load_labeled_dataframe(tag).reset_index(drop=True)
-        neighbors = sorted(neighbors, key=lambda t: t[1], reverse=True)[:3]
-        for idx, sim, h in neighbors:
+        top_show = sorted(neighbors_used, key=lambda t: t[1], reverse=True)[:3]
+        for idx, sim, h in top_show:
             if idx is None or idx < 0 or idx >= len(labeled):
                 continue
             row = labeled.loc[idx]
@@ -288,7 +378,7 @@ def index():
         form=form,
         estimate=estimate,
         estimate_top1=estimate_top1,
-        neighbors=neighbors,
+        neighbors=neighbors_used if 'neighbors_used' in locals() else neighbors,
         examples=examples,
         debug_info=debug_info,
         status=_status_obj(),
