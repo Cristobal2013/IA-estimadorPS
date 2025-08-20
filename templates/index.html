@@ -66,20 +66,20 @@
       lastResult = data;
       resBox.innerHTML = `
         <h3>Estimación</h3>
-        <p><span class="pill">${Number(data.horas || 0).toFixed(2)} h</span>
-           <small>(${data.metodo || "faiss"})</small></p>
-        ${Array.isArray(data.top) ? `
+        <p><span class="pill">\${Number(data.horas || 0).toFixed(2)} h</span>
+           <small>(\${data.metodo || "faiss+catalog"})</small></p>
+        \${Array.isArray(data.top) ? `
           <h4>Coincidencias</h4>
           <table class="tbl">
             <thead><tr><th>#</th><th>Ticket</th><th>Horas</th><th>Similitud</th><th>Descripción</th></tr></thead>
             <tbody>
-            ${data.top.slice(0,3).map((t,i)=>`
+            \${data.top.slice(0,3).map((t,i)=>`
               <tr>
-                <td>${i+1}</td>
-                <td>${t.ticket || ""}</td>
-                <td>${t.hours ?? ""}</td>
-                <td>${(t.sim || 0).toFixed(3)}</td>
-                <td class="wrap">${t.text || ""}</td>
+                <td>\${i+1}</td>
+                <td>\${t.ticket || ""}</td>
+                <td>\${t.hours ?? ""}</td>
+                <td>\${(t.sim || 0).toFixed(3)}</td>
+                <td class="wrap">\${t.text || ""}</td>
               </tr>`).join("")}
             </tbody>
           </table>
@@ -98,7 +98,7 @@
           horas: lastResult?.horas || 0,
           top_ticket: top1.ticket || "",
           top_sim: top1.sim || 0,
-          metodo: lastResult?.metodo || "faiss",
+          metodo: lastResult?.metodo || "faiss+catalog",
           autor: "web",
           comentarios: ""
         };
@@ -117,7 +117,7 @@
       });
     }catch(e){
       resBox.style.display = "block";
-      resBox.innerHTML = `<div class="error">⚠️ Error al estimar: ${e?.message || e}</div>`;
+      resBox.innerHTML = `<div class="error">⚠️ Error al estimar: \${e?.message || e}</div>`;
       console.error(e);
     }finally{
       setBusy(false);

@@ -1,1 +1,1 @@
-from app import app  # gunicorn entrypoint
+from app import app
