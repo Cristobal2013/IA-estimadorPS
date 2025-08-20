@@ -1,11 +1,9 @@
 
 from flask import Flask, render_template, request, jsonify
 from pathlib import Path
-import csv, time, os, json, math, re
+import csv, time, os, json, math, traceback
 
-from estimator import EmbeddingsFaissEstimator, load_labeled_dataframe, train_index_per_type, estimate_from_catalog
-
-app = Flask(__name__)
+app = Flask(__name__, static_folder="static", template_folder="templates")
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(Path(__file__).parent / "data")))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -26,11 +24,25 @@ def _resolve_tag(tipo: str) -> str:
         return "implementacion"
     return "desarrollo"
 
-def _infer_tipo_from_ticket(ticket: str, default_tag: str) -> str:
-    t = (ticket or "").upper().strip()
-    if t.startswith("CESQ"): return "CESQ"
-    if t.startswith("PSTC"): return "PSTC"
-    return "CESQ" if default_tag == "desarrollo" else "PSTC"
+def _lazy_backend():
+    """Importa estimator en tiempo de petición. Evita que errores/tiempos de arranque
+    tumben el proceso (causando 502 y fallos en /static)."""
+    try:
+        from estimator import (
+            EmbeddingsFaissEstimator,
+            load_labeled_dataframe,
+            train_index_per_type,
+            estimate_from_catalog,
+        )
+        return {
+            "EmbeddingsFaissEstimator": EmbeddingsFaissEstimator,
+            "load_labeled_dataframe": load_labeled_dataframe,
+            "train_index_per_type": train_index_per_type,
+            "estimate_from_catalog": estimate_from_catalog,
+            "ok": True, "err": None
+        }
+    except Exception as e:
+        return {"ok": False, "err": f"{type(e).__name__}: {e}", "tb": traceback.format_exc()}
 
 @app.route("/")
 def index():
@@ -38,7 +50,12 @@ def index():
 
 @app.get("/api/health")
 def api_health():
-    return {"ok": True}
+    backend = _lazy_backend()
+    return {
+        "ok": True,
+        "estimator_import": backend.get("ok", False),
+        "estimator_error": backend.get("err")
+    }
 
 @app.post("/api/estimate")
 def api_estimate():
@@ -50,18 +67,40 @@ def api_estimate():
         return jsonify({"ok": False, "error": "texto vacío"}), 400
 
     tag = _resolve_tag(tipo)
-    est = EmbeddingsFaissEstimator(tag)
+
+    backend = _lazy_backend()
+    if not backend.get("ok"):
+        return jsonify({"ok": False, "error": "estimator import failed", "detail": backend.get("err")}), 500
+
+    Emb = backend["EmbeddingsFaissEstimator"]
+    load_df = backend["load_labeled_dataframe"]
+    train_ix = backend["train_index_per_type"]
+    est_cat = backend["estimate_from_catalog"]
+
+    est = Emb(tag)
     loaded = False
     try:
         loaded = est.load()
     except Exception:
         loaded = False
     if not loaded:
-        train_index_per_type(full=True)
-        est.load()
+        try:
+            train_ix(full=True)
+            est.load()
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"no se pudo entrenar/cargar índice: {e}"}), 500
 
-    horas_faiss, neighbors = est.predict(texto, k=int(os.environ.get("TOPK", "15")))
-    labeled = load_labeled_dataframe(tag).reset_index(drop=True)
+    # Predicción FAISS
+    try:
+        horas_faiss, neighbors = est.predict(texto, k=int(os.environ.get("TOPK", "15")))
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"falló predict(): {e}"}), 500
+
+    # Dataset etiquetado
+    try:
+        labeled = load_df(tag).reset_index(drop=True)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"falló load_labeled_dataframe(): {e}"}), 500
 
     def _to_float(x):
         try:
@@ -70,25 +109,29 @@ def api_estimate():
             return 0.0
 
     top = []
-    for (idx, sim, h) in sorted(neighbors, key=lambda t: t[1], reverse=True)[:3]:
-        if idx is None or idx < 0 or idx >= len(labeled):
-            continue
-        row = labeled.loc[idx]
-        hours_row = row.get("hours", 0)
-        hours_val = _to_float(h if h not in (None, "", 0) else hours_row)
-        tk = str(row.get("ticket",""))
-        top.append({
-            "ticket": tk,
-            "tipo": _infer_tipo_from_ticket(tk, tag),
-            "hours": hours_val,
-            "sim": round(float(sim), 3),
-            "source": str(row.get("source","")),
-            "text": str(row.get("text",""))[:480]
-        })
-
-    # Estimación por catálogo (puede no existir en algunos casos)
     try:
-        horas_catalog = estimate_from_catalog(texto, tag, top_n=3, min_cover=0.35)
+        for (idx, sim, h) in sorted(neighbors, key=lambda t: t[1], reverse=True)[:3]:
+            if idx is None or idx < 0 or idx >= len(labeled):
+                continue
+            row = labeled.loc[idx]
+            hours_row = row.get("hours", 0)
+            hours_val = _to_float(h if h not in (None, "", 0) else hours_row)
+            tk = str(row.get("ticket",""))
+            tipo_badge = "CESQ" if tk.upper().startswith("CESQ") else ("PSTC" if tk.upper().startswith("PSTC") else ("CESQ" if tag=="desarrollo" else "PSTC"))
+            top.append({
+                "ticket": tk,
+                "tipo": tipo_badge,
+                "hours": hours_val,
+                "sim": round(float(sim), 3),
+                "source": str(row.get("source","")),
+                "text": str(row.get("text",""))[:480]
+            })
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"falló armado de top: {e}"}), 500
+
+    # Catálogo
+    try:
+        horas_catalog = est_cat(texto, tag, top_n=3, min_cover=0.35)
     except Exception:
         horas_catalog = 0.0
 
@@ -101,9 +144,10 @@ def api_estimate():
     else:
         hybrid = alpha * float(horas_faiss or 0.0) + (1.0 - alpha) * float(horas_catalog or 0.0)
 
-    resp = {
+    import math
+    return jsonify({
         "ok": True,
-        "horas": float(math.ceil(hybrid)),  # redondeo hacia arriba
+        "horas": float(math.ceil(hybrid)),
         "metodo": metodo_norm,
         "detalle": {
             "faiss": float(horas_faiss or 0.0),
@@ -112,8 +156,7 @@ def api_estimate():
             "alpha": alpha if metodo_norm == "faiss+catalog" else None
         },
         "top": top
-    }
-    return jsonify(resp)
+    })
 
 @app.post("/api/accept")
 def api_accept():
