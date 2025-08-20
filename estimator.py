@@ -4,6 +4,35 @@ from typing import List, Tuple, Optional, Dict
 
 import numpy as np
 import pandas as pd
+
+# --- Robust CSV reader patch (auto-added) ---
+try:
+    import math as _math
+    import pandas as _pd
+    _pd_read_csv_orig = _pd.read_csv
+    def _pd_read_csv_robust(*args, **kwargs):
+        # Defaults to avoid tokenizing errors
+        kwargs.setdefault("engine", "python")
+        kwargs.setdefault("low_memory", False)
+        # 'on_bad_lines' is available in pandas >= 1.3
+        if "on_bad_lines" not in kwargs:
+            kwargs["on_bad_lines"] = "skip"
+        # Fallback encodings
+        encodings = [kwargs.pop("encoding", None), "utf-8", "latin-1"]
+        for enc in encodings:
+            if enc is None:
+                continue
+            try:
+                return _pd_read_csv_orig(*args, encoding=enc, **kwargs)
+            except Exception:
+                pass
+        # Try without explicit encoding finally
+        return _pd_read_csv_orig(*args, **kwargs)
+    _pd.read_csv = _pd_read_csv_robust
+except Exception:
+    pass
+# --- End robust patch ---
+
 import faiss
 from sentence_transformers import SentenceTransformer
 
@@ -92,7 +121,7 @@ def _read_csv_smart(path: Path) -> pd.DataFrame:
     for enc in encodings:
         for sep in seps:
             try:
-                df = pd.read_csv(path, encoding=enc, sep=sep, engine=\"python\", low_memory=False, on_bad_lines='skip')
+                df = pd.read_csv(path, encoding=enc, sep=sep, engine="python", low_memory=False)
                 if df.shape[1] >= 2 and len(df) >= 1:
                     df = _normalize_cols(df)
                     if best is None or df.shape[1] > best.shape[1]:
@@ -101,7 +130,7 @@ def _read_csv_smart(path: Path) -> pd.DataFrame:
                 continue
     if best is not None:
         return best
-    return _normalize_cols(pd.read_csv(path, encoding=\"utf-8\", low_memory=False, on_bad_lines='skip'))
+    return _normalize_cols(pd.read_csv(path, encoding="utf-8", low_memory=False))
 
 _TEXT_HINTS   = ["summary","resumen","descripcion","descripción","title","título","nombre","text","nombre tarea"]
 _HOURS_HINTS  = ["original estimate","horas","hours","estimado","estimacion","estimación","hh","hhs"]
