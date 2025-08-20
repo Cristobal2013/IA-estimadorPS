@@ -544,3 +544,8 @@ def api_estimate():
 if __name__ == "__main__":
     # Local: python app.py ; En Render usamos gunicorn wsgi:app
     app.run(host="0.0.0.0", port=7860, debug=True)
+
+
+@app.get("/api/health")
+def api_health():
+    return {"ok": True}

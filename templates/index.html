@@ -19,10 +19,11 @@
       </div>
       <div class="field">
         <label for="texto">Solicitud</label>
-        <textarea id="texto" placeholder="Describe el requerimiento..."></textarea>
+        <textarea id="texto" placeholder="Describe el requerimiento..." rows="5"></textarea>
       </div>
       <div class="actions">
         <button id="btn-estimar" type="button">Estimar</button>
+        <span id="status" class="status" aria-live="polite"></span>
       </div>
     </div>
 
@@ -32,63 +33,98 @@
   <script>
   const $ = sel => document.querySelector(sel);
   const resBox = $("#live-result");
+  const btn = $("#btn-estimar");
+  const status = $("#status");
   let lastResult = null;
 
-  $("#btn-estimar").addEventListener("click", async () => {
-    const payload = { tipo: $("#tipo").value, texto: $("#texto").value.trim() };
-    const r = await fetch("/api/estimate", {
-      method: "POST",
-      headers: {"Content-Type":"application/json"},
-      body: JSON.stringify(payload)
-    });
-    const data = await r.json();
-    lastResult = data;
-    resBox.innerHTML = `
-      <h3>Estimación</h3>
-      <p><span class="pill">${(data.horas ?? 0).toFixed(2)} h</span> <small>(${data.metodo || 'faiss'})</small></p>
-      ${Array.isArray(data.top) ? `
-        <h4>Coincidencias</h4>
-        <table class="tbl">
-          <thead><tr><th>#</th><th>Ticket</th><th>Horas</th><th>Similitud</th><th>Descripción</th></tr></thead>
-          <tbody>
-          ${data.top.slice(0,3).map((t,i)=>`
-            <tr>
-              <td>${i+1}</td>
-              <td>${t.ticket || ''}</td>
-              <td>${t.hours ?? ''}</td>
-              <td>${(t.sim || 0).toFixed(3)}</td>
-              <td class="wrap">${t.text || ''}</td>
-            </tr>`).join("")}
-          </tbody>
-        </table>
-      ` : ""}
-      <div class="actions-row">
-        <button id="btn-accept">Guardar esta estimación</button>
-      </div>
-    `;
-    resBox.style.display = "block";
+  function setBusy(b){
+    btn.disabled = b;
+    status.textContent = b ? "Estimando..." : "";
+  }
 
-    $("#btn-accept")?.addEventListener("click", async () => {
-      const top1 = (lastResult?.top || [])[0] || {};
-      const payload2 = {
-        tipo: $("#tipo").value,
-        texto: $("#texto").value.trim(),
-        horas: lastResult?.horas || 0,
-        top_ticket: top1.ticket || "",
-        top_sim: top1.sim || 0,
-        metodo: lastResult?.metodo || "faiss",
-        autor: "web",
-        comentarios: ""
-      };
-      const r2 = await fetch("/api/accept", {
-        method:"POST",
+  async function doEstimate(){
+    const payload = {
+      tipo: $("#tipo").value,
+      texto: $("#texto").value.trim()
+    };
+    if(!payload.texto){
+      alert("Ingresa una solicitud.");
+      return;
+    }
+    try{
+      setBusy(true);
+      const r = await fetch("/api/estimate", {
+        method: "POST",
         headers: {"Content-Type":"application/json"},
-        body: JSON.stringify(payload2)
+        body: JSON.stringify(payload)
       });
-      const j2 = await r2.json();
-      if (j2.ok) { alert("✅ Estimación guardada."); } else { alert("⚠️ No se pudo guardar."); }
-    });
-  });
+      if(!r.ok){
+        const msg = await r.text();
+        throw new Error("HTTP " + r.status + ": " + msg);
+      }
+      const data = await r.json();
+      lastResult = data;
+      resBox.innerHTML = `
+        <h3>Estimación</h3>
+        <p><span class="pill">${Number(data.horas || 0).toFixed(2)} h</span>
+           <small>(${data.metodo || "faiss"})</small></p>
+        ${Array.isArray(data.top) ? `
+          <h4>Coincidencias</h4>
+          <table class="tbl">
+            <thead><tr><th>#</th><th>Ticket</th><th>Horas</th><th>Similitud</th><th>Descripción</th></tr></thead>
+            <tbody>
+            ${data.top.slice(0,3).map((t,i)=>`
+              <tr>
+                <td>${i+1}</td>
+                <td>${t.ticket || ""}</td>
+                <td>${t.hours ?? ""}</td>
+                <td>${(t.sim || 0).toFixed(3)}</td>
+                <td class="wrap">${t.text || ""}</td>
+              </tr>`).join("")}
+            </tbody>
+          </table>
+        ` : ""}
+        <div class="actions-row">
+          <button id="btn-accept">Guardar esta estimación</button>
+        </div>
+      `;
+      resBox.style.display = "block";
+
+      $("#btn-accept")?.addEventListener("click", async () => {
+        const top1 = (lastResult?.top || [])[0] || {};
+        const payload2 = {
+          tipo: $("#tipo").value,
+          texto: $("#texto").value.trim(),
+          horas: lastResult?.horas || 0,
+          top_ticket: top1.ticket || "",
+          top_sim: top1.sim || 0,
+          metodo: lastResult?.metodo || "faiss",
+          autor: "web",
+          comentarios: ""
+        };
+        try{
+          const r2 = await fetch("/api/accept", {
+            method:"POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify(payload2)
+          });
+          const j2 = await r2.json().catch(()=>({ok:false}));
+          if (j2.ok) { alert("✅ Estimación guardada."); }
+          else { alert("⚠️ No se pudo guardar."); }
+        }catch(e){
+          alert("Error guardando: " + (e?.message || e));
+        }
+      });
+    }catch(e){
+      resBox.style.display = "block";
+      resBox.innerHTML = `<div class="error">⚠️ Error al estimar: ${e?.message || e}</div>`;
+      console.error(e);
+    }finally{
+      setBusy(false);
+    }
+  }
+
+  btn.addEventListener("click", doEstimate);
   </script>
 </body>
 </html>
