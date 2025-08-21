@@ -173,6 +173,82 @@ def _make_rows(df: pd.DataFrame, text_col: str, hours_col: Optional[str]=None,
     out = out[out["text"].str.strip() != ""].reset_index(drop=True)
     return out[["text","hours","ticket","source"]]
 
+
+# ---------- Robust hour extraction (shared with app) ----------
+import unicodedata as _unicodedata
+
+_CAND_HOUR_KEYS = [
+    "hours","hour","horas","hh","hhs","hrs","he","hr",
+    "total_horas","hh_total","hh_totales",
+    "horas_estimadas","estimacion_horas","hrs_estimadas","hrestimadas",
+    "hh_estimadas","hhs_estimadas","estimacion_hhs","hhe","hh_est","hhestimadas"
+]
+
+def _strip_accents_est(s: str) -> str:
+    try:
+        return "".join(c for c in _unicodedata.normalize("NFD", str(s)) if _unicodedata.category(c) != "Mn")
+    except Exception:
+        return str(s)
+
+def _norm_key_est(k: str) -> str:
+    s = _strip_accents_est(str(k)).lower()
+    return (s.replace(" ", "")
+             .replace("_", "")
+             .replace(".", "")
+             .replace("-", "")
+             .replace("'", "")
+             .replace("’", "")
+             .replace("´", ""))
+
+_HOUR_NAME_RX_EST = re.compile(r"(hh|hhs|hrs?|hora|horas|hours|hhe|hr)", re.I)
+_HOUR_TEXT_RX_EST = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:hh'?s?|hh|hrs?|horas?|h\b)", re.I)
+
+def _extract_hours_from_row_est(row) -> float:
+    # 0) mapa normalizado
+    try:
+        keys = list(row.index)
+    except Exception:
+        keys = list(getattr(row, "keys", lambda: [])())
+    norm_map = { _norm_key_est(k): k for k in keys }
+
+    # 1) por lista blanca exacta
+    for cand in _CAND_HOUR_KEYS:
+        kn = _norm_key_est(cand)
+        orig = norm_map.get(kn)
+        if orig is not None:
+            try:
+                v = float(str(row.get(orig, 0)).replace(",", "."))
+            except Exception:
+                v = 0.0
+            if v > 0:
+                return v
+
+    # 2) por patrón flexible de nombre
+    for nk, orig in norm_map.items():
+        if _HOUR_NAME_RX_EST.search(nk):
+            try:
+                v = float(str(row.get(orig, 0)).replace(",", "."))
+            except Exception:
+                v = 0.0
+            if v > 0:
+                return v
+
+    # 3) desde texto con unidad (incluye 'h' sola)
+    for k in keys:
+        val = row.get(k)
+        if isinstance(val, str) and val:
+            m = _HOUR_TEXT_RX_EST.findall(val)
+            if m:
+                try:
+                    v = float(m[-1].replace(",", "."))
+                except Exception:
+                    v = 0.0
+                if v > 0:
+                    return v
+
+    # 4) si nada, 0
+    return 0.0
+
 # ---------- Carga de catálogos para estimate_from_catalog ----------
 def load_catalog(tipo: str):
     """
