@@ -1,7 +1,6 @@
-
 from flask import Flask, render_template, request, jsonify
 from pathlib import Path
-import csv, time, os, json, math, traceback
+import csv, time, os, json, math, re, traceback
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
@@ -21,14 +20,44 @@ def _existing_fields(path: Path):
     except Exception:
         return None
 
+# -------- Números robustos --------
+_num_rx = re.compile(r"[-+]?(?:\d+[\.,]\d+|\d+)")
 def _to_float(x):
     try:
-        v = float(x)
+        v = float(str(x).replace(",", ".").strip())
     except Exception:
-        return 0.0
+        m = _num_rx.search(str(x))
+        if not m:
+            return 0.0
+        try:
+            v = float(m.group(0).replace(",", "."))
+        except Exception:
+            return 0.0
     if math.isnan(v) or math.isinf(v):
         return 0.0
     return v
+
+# nombres de columnas típicos para horas
+CAND_HOUR_KEYS = [
+    "hours","horas","hh","hhs","hrs","he","total_horas","hh_total","hh_totales",
+    "horas_estimadas","estimacion_horas","hrs_estimadas","Hrs","Hrs.","HH","HHs","HE"
+]
+
+def _row_hours(row):
+    # 1) Busca múltiples nombres de columna
+    for k in CAND_HOUR_KEYS:
+        if k in row:
+            v = _to_float(row.get(k, 0))
+            if v > 0:
+                return v
+    # 2) Si hay texto con 'h' intenta extraer número
+    for k in row.keys():
+        val = row.get(k)
+        if isinstance(val, str) and "h" in val.lower():
+            v = _to_float(val)
+            if v > 0:
+                return v
+    return 0.0
 
 def append_row_safe(row: dict):
     fields = _existing_fields(NEW_EST_CSV) or FULL_FIELDS
@@ -134,15 +163,16 @@ def api_estimate():
             if idx is None or idx < 0 or idx >= len(labeled):
                 continue
             row = labeled.loc[idx]
-            hours_row = _to_float(row.get("hours", 0))
-            hours_val = _to_float(h) or hours_row
+            h_neighbor = _to_float(h)
+            h_row = _row_hours(row)  # busca horas en múltiples columnas
+            hours_val = h_neighbor if h_neighbor > 0 else h_row
             sim_val = _to_float(sim)
             tk = str(row.get("ticket",""))
             tipo_badge = "CESQ" if tk.upper().startswith("CESQ") else ("PSTC" if tk.upper().startswith("PSTC") else ("CESQ" if tag=="desarrollo" else "PSTC"))
             top.append({
                 "ticket": tk,
                 "tipo": tipo_badge,
-                "hours": hours_val,
+                "hours": float(hours_val),
                 "sim": sim_val,
                 "source": str(row.get("source","")),
                 "text": str(row.get("text",""))[:480]
@@ -166,11 +196,11 @@ def api_estimate():
 
     resp = {
         "ok": True,
-        "horas": float(math.ceil(_to_float(hybrid))),
+        "horas": float(math.ceil(max(0.0, _to_float(hybrid)))),
         "metodo": metodo_norm,
         "detalle": {
-            "faiss": horas_faiss,
-            "catalogo": horas_catalog,
+            "faiss": float(horas_faiss),
+            "catalogo": float(horas_catalog),
             "final_sin_redondeo": float(round(_to_float(hybrid), 2)),
             "alpha": alpha if metodo_norm == "faiss+catalog" else None
         },
