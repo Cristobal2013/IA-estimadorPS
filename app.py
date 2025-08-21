@@ -73,6 +73,8 @@ def _norm_key(k: str) -> str:
 
 # patrón flexible: hh / hhs / hrs / hora / horas / hours / hhe
 _HOUR_NAME_RX = re.compile(r"(hh|hhs|hrs?|hora|horas|hours|hhe)", re.I)
+# patrón de extracción seguro (con unidad)
+_HOUR_TEXT_RX = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:hh'?s?|hh|hrs?|horas?)", re.I)
 
 def _row_hours(row):
     # 0) mapa de nombres normalizados -> original
@@ -98,17 +100,18 @@ def _row_hours(row):
             if v > 0:
                 return v
 
-    # 3) extraer desde textos, pero solo si la columna "parece" de horas (por nombre)
-    for nk, orig in norm_map.items():
-        if nk in _IGNORE_KEYS:
-            continue
-        if not _HOUR_NAME_RX.search(nk):
-            continue
-        val = row.get(orig)
+    # 3) extracción desde cualquier texto que contenga explícitamente la unidad (hh/hrs/horas)
+    for k in keys:
+        val = row.get(k)
         if isinstance(val, str):
-            v = _to_float(val)
-            if v > 0:
-                return v
+            m = _HOUR_TEXT_RX.findall(val)
+            if m:
+                try:
+                    v = float(m[-1].replace(",", "."))
+                except Exception:
+                    v = 0.0
+                if v > 0:
+                    return v
 
     # 4) fallback: primer numérico razonable en columnas que no sean obvias de id/sim/texto
     for k in keys:
@@ -226,7 +229,7 @@ def api_estimate():
                 continue
             row = labeled.loc[idx]
             h_neighbor = _to_float(h)
-            h_row = _row_hours(row)  # busca horas en múltiples columnas / patrones
+            h_row = _row_hours(row)  # ahora captura horas en Comments/Description también
             hours_val = h_neighbor if h_neighbor > 0 else h_row
             sim_val = _to_float(sim)
             tk = str(row.get("ticket",""))
