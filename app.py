@@ -37,26 +37,75 @@ def _to_float(x):
         return 0.0
     return v
 
-# nombres de columnas típicos para horas
+# ---------------- HORAS: detección robusta ----------------
+# base de nombres "típicos"
 CAND_HOUR_KEYS = [
-    "hours","horas","hh","hhs","hrs","he","total_horas","hh_total","hh_totales",
-    "horas_estimadas","estimacion_horas","hrs_estimadas","Hrs","Hrs.","HH","HHs","HE"
+    "hours","hour","horas","hh","hhs","hrs","he",
+    "total_horas","hh_total","hh_totales",
+    "horas_estimadas","estimacion_horas","hrs_estimadas","hrestimadas",
+    "hh_estimadas","hhs_estimadas","estimacion_hhs"
 ]
 
+# columnas que NO se consideran para fallback numérico
+_IGNORE_KEYS = {"sim","similaridad","similarity","cosine","cosinesim",
+                "ticket","codigo","id","source","fuente","tipo","texto",
+                "description","descripcion","desc","detalle"}
+
+def _norm_key(k: str) -> str:
+    # normaliza: minúsculas y sin espacios/puntos/apóstrofes/guiones/underscores
+    return (str(k).lower()
+            .replace(" ", "")
+            .replace("_", "")
+            .replace(".", "")
+            .replace("-", "")
+            .replace("'", "")
+            .replace("’", "")
+            .replace("´", ""))
+
+# patrón flexible: cualquier columna que contenga hh / hhs / hrs / hora / hours
+_HOUR_NAME_RX = re.compile(r"(hh|hhs|hrs?|hora|hours)", re.I)
+
 def _row_hours(row):
-    # 1) Busca múltiples nombres de columna
-    for k in CAND_HOUR_KEYS:
-        if k in row:
-            v = _to_float(row.get(k, 0))
+    # 0) mapa de nombres normalizados -> original
+    try:
+        keys = list(row.index)
+    except Exception:
+        keys = list(getattr(row, "keys", lambda: [])())
+    norm_map = { _norm_key(k): k for k in keys }
+
+    # 1) exactos por lista blanca (normalizados)
+    for cand in CAND_HOUR_KEYS:
+        key_norm = _norm_key(cand)
+        for nk, orig in norm_map.items():
+            if nk == key_norm:
+                v = _to_float(row.get(orig, 0))
+                if v > 0:
+                    return v
+
+    # 2) por patrón flexible (incluye cosas como "hh's", "hh_estimadas", etc.)
+    for nk, orig in norm_map.items():
+        if _HOUR_NAME_RX.search(nk):
+            v = _to_float(row.get(orig, 0))
             if v > 0:
                 return v
-    # 2) Si hay texto con 'h' intenta extraer número
-    for k in row.keys():
+
+    # 3) extraer desde textos con "h"/"hh"
+    for k in keys:
         val = row.get(k)
-        if isinstance(val, str) and "h" in val.lower():
+        if isinstance(val, str) and ("h" in val.lower() or "hh" in val.lower()):
             v = _to_float(val)
             if v > 0:
                 return v
+
+    # 4) fallback: primer numérico razonable en columnas que no sean obvias de id/sim/texto
+    for k in keys:
+        nk = _norm_key(k)
+        if nk in _IGNORE_KEYS:
+            continue
+        v = _to_float(row.get(k, 0))
+        if 0 < v < 1000:
+            return v
+
     return 0.0
 
 def append_row_safe(row: dict):
@@ -164,7 +213,7 @@ def api_estimate():
                 continue
             row = labeled.loc[idx]
             h_neighbor = _to_float(h)
-            h_row = _row_hours(row)  # busca horas en múltiples columnas
+            h_row = _row_hours(row)  # busca horas en múltiples columnas / patrones
             hours_val = h_neighbor if h_neighbor > 0 else h_row
             sim_val = _to_float(sim)
             tk = str(row.get("ticket",""))
