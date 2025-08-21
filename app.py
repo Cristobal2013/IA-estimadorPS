@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, jsonify
 from pathlib import Path
-import csv, time, os, json, math, re, traceback
+import csv, time, os, json, math, re, traceback, unicodedata
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
@@ -43,27 +43,36 @@ CAND_HOUR_KEYS = [
     "hours","hour","horas","hh","hhs","hrs","he",
     "total_horas","hh_total","hh_totales",
     "horas_estimadas","estimacion_horas","hrs_estimadas","hrestimadas",
-    "hh_estimadas","hhs_estimadas","estimacion_hhs"
+    "hh_estimadas","hhs_estimadas","estimacion_hhs","hhe","hh_est","hhestimadas"
 ]
 
 # columnas que NO se consideran para fallback numérico
-_IGNORE_KEYS = {"sim","similaridad","similarity","cosine","cosinesim",
-                "ticket","codigo","id","source","fuente","tipo","texto",
-                "description","descripcion","desc","detalle"}
+_IGNORE_KEYS = {
+    "sim","similaridad","similarity","cosine","cosinesim",
+    "ticket","codigo","id","source","fuente","tipo","texto",
+    "description","descripcion","desc","detalle",
+    "fecha","fechacreacion","fechacierre","anio","ano","year","mes"
+}
+
+def _strip_accents(s: str) -> str:
+    try:
+        return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+    except Exception:
+        return s
 
 def _norm_key(k: str) -> str:
-    # normaliza: minúsculas y sin espacios/puntos/apóstrofes/guiones/underscores
-    return (str(k).lower()
-            .replace(" ", "")
-            .replace("_", "")
-            .replace(".", "")
-            .replace("-", "")
-            .replace("'", "")
-            .replace("’", "")
-            .replace("´", ""))
+    # normaliza: minúsculas, sin acentos ni separadores
+    s = _strip_accents(str(k)).lower()
+    return (s.replace(" ", "")
+             .replace("_", "")
+             .replace(".", "")
+             .replace("-", "")
+             .replace("'", "")
+             .replace("’", "")
+             .replace("´", ""))
 
-# patrón flexible: cualquier columna que contenga hh / hhs / hrs / hora / hours
-_HOUR_NAME_RX = re.compile(r"(hh|hhs|hrs?|hora|hours)", re.I)
+# patrón flexible: hh / hhs / hrs / hora / horas / hours / hhe
+_HOUR_NAME_RX = re.compile(r"(hh|hhs|hrs?|hora|horas|hours|hhe)", re.I)
 
 def _row_hours(row):
     # 0) mapa de nombres normalizados -> original
@@ -73,7 +82,7 @@ def _row_hours(row):
         keys = list(getattr(row, "keys", lambda: [])())
     norm_map = { _norm_key(k): k for k in keys }
 
-    # 1) exactos por lista blanca (normalizados)
+    # 1) match exacto por lista blanca (normalizados)
     for cand in CAND_HOUR_KEYS:
         key_norm = _norm_key(cand)
         for nk, orig in norm_map.items():
@@ -82,17 +91,21 @@ def _row_hours(row):
                 if v > 0:
                     return v
 
-    # 2) por patrón flexible (incluye cosas como "hh's", "hh_estimadas", etc.)
+    # 2) match por patrón flexible (p. ej. "hh's", "hh_estimadas", "horas estimadas", etc.)
     for nk, orig in norm_map.items():
         if _HOUR_NAME_RX.search(nk):
             v = _to_float(row.get(orig, 0))
             if v > 0:
                 return v
 
-    # 3) extraer desde textos con "h"/"hh"
-    for k in keys:
-        val = row.get(k)
-        if isinstance(val, str) and ("h" in val.lower() or "hh" in val.lower()):
+    # 3) extraer desde textos, pero solo si la columna "parece" de horas (por nombre)
+    for nk, orig in norm_map.items():
+        if nk in _IGNORE_KEYS:
+            continue
+        if not _HOUR_NAME_RX.search(nk):
+            continue
+        val = row.get(orig)
+        if isinstance(val, str):
             v = _to_float(val)
             if v > 0:
                 return v
