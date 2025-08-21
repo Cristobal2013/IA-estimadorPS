@@ -6,34 +6,25 @@ import numpy as np
 import pandas as pd
 
 # --- Robust CSV reader patch (auto-added) ---
-try:
-    import math as _math
-    import pandas as _pd
-    
+import pandas as _pd
 _pd_read_csv_orig = _pd.read_csv
 def _pd_read_csv_robust(*args, **kwargs):
-    # Prefer robust defaults
+    # Prefer safe defaults for messy CSVs
     if "on_bad_lines" not in kwargs:
         kwargs["on_bad_lines"] = "skip"
-    # Respect given engine; if python engine, drop low_memory (not supported)
-    eng = kwargs.get("engine", None)
-    if eng == "python" and "low_memory" in kwargs:
+    # If python engine is used, low_memory is unsupported -> drop it
+    if kwargs.get("engine") == "python":
         kwargs.pop("low_memory", None)
-
     # Encoding fallbacks
     given_enc = kwargs.pop("encoding", None)
     encodings = [given_enc, "utf-8", "latin-1"]
-
     last_err = None
     for enc in encodings:
         try:
-            if eng == "python":
-                return _pd_read_csv_orig(*args, encoding=enc, **kwargs)
-            # Try as-is first
             return _pd_read_csv_orig(*args, encoding=enc, **kwargs)
         except Exception as e:
             last_err = e
-            # If failed and engine not forced, try python engine without low_memory
+            # Retry forcing python engine (without low_memory)
             try_kwargs = dict(kwargs)
             try_kwargs["engine"] = "python"
             try_kwargs.pop("low_memory", None)
@@ -42,15 +33,12 @@ def _pd_read_csv_robust(*args, **kwargs):
             except Exception as e2:
                 last_err = e2
                 continue
-    # Final attempt without encoding
+    # Final attempt without explicit encoding
     try_kwargs = dict(kwargs)
     if try_kwargs.get("engine") == "python":
         try_kwargs.pop("low_memory", None)
     return _pd_read_csv_orig(*args, **try_kwargs)
 _pd.read_csv = _pd_read_csv_robust
-
-except Exception:
-    pass
 # --- End robust patch ---
 
 import faiss
