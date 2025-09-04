@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>Estimador IA</title>
+  <title>IA Estimator</title>
   <link rel="stylesheet" href="/static/styles.css">
   <style>
     /* Solo estilos del header con logo; no toca tu styles.css existente */
@@ -21,34 +21,34 @@
   <!-- Nueva barra con logo + título -->
   <header class="topbar">
     <img src="/static/sovos.png" alt="SOVOS" class="logo">
-    <h1>Estimador de Horas con IA</h1>
+    <h1>AI Hours Estimator</h1>
   </header>
 
   <div class="container">
-    <!-- (Quité el h1 que estaba aquí para evitar duplicado) -->
+    
 
     <div class="card">
       <div class="field">
-        <label for="tipo">Tipo</label>
+        <label for="tipo">Type</label>
         <select id="tipo" name="tipo">
-          <option value="desarrollo">CESQ (Desarrollo)</option>
-          <option value="implementacion">PSTC (Implementación)</option>
+          <option value="desarrollo">CESQ (Development)</option>
+          <option value="implementacion">PSTC (Implementation)</option>
         </select>
       </div>
       <div class="field">
-        <label for="metodo">Método</label>
+        <label for="metodo">Method</label>
         <select id="metodo" name="metodo">
-          <option value="faiss+catalog">FAISS + Catálogo (recomendado)</option>
-          <option value="faiss">Solo FAISS (vecinos)</option>
-          <option value="catalog">Solo Catálogo</option>
+          <option value="faiss+catalog">FAISS + Catalog (recommended)</option>
+          <option value="faiss">FAISS only (nearest neighbors)</option>
+          <option value="catalog">Catalog only</option>
         </select>
       </div>
       <div class="field">
-        <label for="texto">Solicitud</label>
-        <textarea id="texto" placeholder="Describe el requerimiento..." rows="5"></textarea>
+        <label for="texto">Request</label>
+        <textarea id="texto" placeholder="Describe the request..." rows="5"></textarea>
       </div>
       <div class="actions">
-        <button id="btn-estimar" type="button">Estimar</button>
+        <button id="btn-estimar" type="button">Estimate</button>
         <span id="status" class="status" aria-live="polite"></span>
       </div>
     </div>
@@ -66,7 +66,7 @@
 
     function setBusy(b){
       btn.disabled = b;
-      status.textContent = b ? "Estimando..." : "";
+      status.textContent = b ? "Estimating..." : "";
     }
     function fmt(n){ return Number(n || 0).toFixed(2); }
 
@@ -93,7 +93,7 @@
         texto: $("#texto").value.trim()
       };
       if(!payload.texto){
-        alert("Ingresa una solicitud.");
+        alert("Please enter a request.");
         return;
       }
       try{
@@ -145,10 +145,10 @@
                 body: JSON.stringify(payload2)
               });
               const j2 = await r2.json().catch(()=>({ok:false}));
-              if (j2.ok) { alert("✅ Estimación guardada."); }
-              else { alert("⚠️ No se pudo guardar."); }
+              if (j2.ok) { alert("✅ Estimate saved."); }
+              else { alert("⚠️ Could not save."); }
             }catch(e){
-              alert("Error guardando: " + (e && e.message ? e.message : e));
+              alert("Error while saving: " + (e && e.message ? e.message : e));
             }
           });
         }
