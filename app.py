@@ -4,6 +4,12 @@ import csv, time, os, json, math, re, traceback, unicodedata
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
+# TOPK configurables (cálculo vs UI)
+TOPK = int(os.environ.get("TOPK", "3"))
+TOPK_UI = int(os.environ.get("TOPK_UI", str(TOPK)))
+DEBUG_FLAG = os.environ.get("DEBUG", "0") == "1"
+
+
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(Path(__file__).parent / "data")))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 NEW_EST_CSV = DATA_DIR / "estimaciones_nuevas.csv"
@@ -212,7 +218,7 @@ def api_estimate():
             return jsonify({"ok": False, "error": f"no se pudo entrenar/cargar índice: {e}"}), 500
 
     try:
-        horas_faiss, neighbors = est.predict(texto, k=int(os.environ.get("TOPK", "15")))
+        horas_faiss, neighbors = est.predict(texto, k=TOPK)
         horas_faiss = _to_float(horas_faiss)
     except Exception as e:
         return jsonify({"ok": False, "error": f"falló predict(): {e}"}), 500
@@ -224,7 +230,7 @@ def api_estimate():
 
     top = []
     try:
-        for (idx, sim, h) in sorted(neighbors, key=lambda t: t[1], reverse=True)[:3]:
+        for (idx, sim, h) in sorted(neighbors, key=lambda t: t[1], reverse=True)[:TOPK_UI]:
             if idx is None or idx < 0 or idx >= len(labeled):
                 continue
             row = labeled.loc[idx]
