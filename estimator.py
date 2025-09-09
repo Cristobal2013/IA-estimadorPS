@@ -362,8 +362,28 @@ class EmbeddingsFaissEstimator:
             if i == -1:
                 continue
             neigh.append((int(i), float(s), float(self.hours[i])))
-        total = sum(s for _, s, _ in neigh) or 1.0
-        est = sum(h * s for _, s, h in neigh) / total if neigh else 0.0
+        # --- Promedio ponderado robusto ---
+        if not neigh:
+            return 0.0, []
+        # ordenar por similitud
+        neigh.sort(key=lambda t: t[1], reverse=True)
+        # recorte por masa de similitud (80%)
+        total_sim = sum(s for _, s, _ in neigh) or 1.0
+        acc = 0.0
+        used = []
+        for (i, s, h) in neigh:
+            used.append((i, s, h))
+            acc += s
+            if acc >= 0.80 * total_sim:
+                break
+        # clip percentil para horas (p10-p90) si hay suficientes
+        hs = [h for (_, _, h) in used]
+        if len(hs) >= 3:
+            p10, p90 = np.percentile(hs, [10, 90])
+            used = [(i, s, float(min(max(h, float(p10)), float(p90)))) for (i, s, h) in used]
+        num = sum(h * s for _, s, h in used)
+        den = sum(s for _, s, _ in used) or 1e-9
+        est = num / den
         return est, neigh
 
 # ---------- Orquestación de entrenamiento ----------
