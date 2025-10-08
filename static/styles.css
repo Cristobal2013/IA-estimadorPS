@@ -1,22 +1,172 @@
-body {font-family: Arial, sans-serif; background: #f6f8fa; margin: 0; padding: 20px;}
-.container {max-width: 900px; margin: auto;}
-h1 {text-align: center; margin-bottom: 20px;}
-.card {background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); margin-bottom: 20px;}
-.field {margin-bottom: 15px;}
-label {display: block; font-weight: 600; margin-bottom: 6px;}
-textarea, select {width: 100%; padding: 10px; border: 1px solid #d0d7de; border-radius: 8px; background: #fff;}
-button {background: #1f6feb; color: white; border: none; padding: 10px 12px; border-radius: 8px; cursor: pointer;}
-button[disabled] {opacity: 0.6; cursor: not-allowed;}
-button:hover:not([disabled]) {background: #1158c7;}
-.status {margin-left: 10px; font-size: 12px; color: #555;}
-.tbl {width: 100%; border-collapse: collapse; margin-top: 10px;}
-.tbl th, .tbl td {border: 1px solid #e5e7eb; padding: 8px; text-align: left; vertical-align: top;}
-.tbl th {background: #f3f4f6;}
-.pill {background: #1f6feb; color: white; padding: 4px 10px; border-radius: 999px;}
-.badge {display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; margin-right: 6px; line-height: 1.2;}
-.badge-tipo {background: #e0f2fe; color: #075985; border: 1px solid #bae6fd;}
-.sub {color: #4b5563; margin-top: -8px; margin-bottom: 6px;}
-.wrap {white-space: normal; word-wrap: break-word;}
-.actions {text-align: right;}
-.actions-row {margin-top: 15px; text-align: right;}
-.error {color: #b00020; font-weight: 600;}
+/* ======= General ======= */
+body {
+  font-family: "Segoe UI", Roboto, Arial, sans-serif;
+  background: #f4f7fb;
+  color: #333;
+  margin: 0;
+  padding: 0;
+}
+
+/* ======= Header / Topbar ======= */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e6e6e6;
+  background: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.topbar .logo {
+  height: 40px;
+  width: auto;
+  display: block;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: #222;
+}
+
+/* ======= Layout ======= */
+.container {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 40px 20px;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+
+.card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  padding: 24px;
+  width: 100%;
+  max-width: 520px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 16px;
+}
+
+label {
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: #444;
+}
+
+select,
+textarea,
+input {
+  padding: 8px 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 14px;
+  background-color: #fff;
+  transition: border 0.2s;
+}
+
+select:focus,
+textarea:focus,
+input:focus {
+  border-color: #0073e6;
+  outline: none;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 100px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+button {
+  background-color: #0073e6;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 10px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.2s;
+}
+
+button:hover {
+  background-color: #005bb5;
+}
+
+.status {
+  font-size: 0.9em;
+  color: #555;
+}
+
+/* ======= Results ======= */
+#live-result {
+  margin-top: 24px;
+}
+
+table.tbl {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+}
+
+table.tbl th,
+table.tbl td {
+  border: 1px solid #ddd;
+  padding: 6px 8px;
+  font-size: 13px;
+  text-align: left;
+}
+
+table.tbl th {
+  background: #f1f1f1;
+  font-weight: 600;
+}
+
+.pill {
+  background: #0073e6;
+  color: #fff;
+  border-radius: 12px;
+  padding: 4px 10px;
+  font-weight: 600;
+  display: inline-block;
+}
+
+.actions-row {
+  margin-top: 16px;
+  text-align: right;
+}
+
+.error {
+  color: #c0392b;
+  background: #fdecea;
+  padding: 8px;
+  border-radius: 6px;
+  margin-top: 12px;
+}
+
+/* ======= Responsive ======= */
+@media (max-width: 600px) {
+  .card {
+    max-width: 100%;
+  }
+
+  .topbar h1 {
+    font-size: 1.1rem;
+  }
+}
