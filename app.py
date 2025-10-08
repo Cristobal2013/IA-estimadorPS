@@ -9,7 +9,6 @@ TOPK = int(os.environ.get("TOPK", "3"))
 TOPK_UI = int(os.environ.get("TOPK_UI", str(TOPK)))
 DEBUG_FLAG = os.environ.get("DEBUG", "0") == "1"
 
-
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(Path(__file__).parent / "data")))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 NEW_EST_CSV = DATA_DIR / "estimaciones_nuevas.csv"
@@ -38,13 +37,12 @@ def _to_float(x):
         try:
             v = float(m.group(0).replace(",", "."))
         except Exception:
-            return 0.0
+            v = 0.0
     if math.isnan(v) or math.isinf(v):
         return 0.0
     return v
 
 # ---------------- HORAS: detección robusta ----------------
-# base de nombres "típicos"
 CAND_HOUR_KEYS = [
     "hours","hour","horas","hh","hhs","hrs","he",
     "total_horas","hh_total","hh_totales",
@@ -52,7 +50,6 @@ CAND_HOUR_KEYS = [
     "hh_estimadas","hhs_estimadas","estimacion_hhs","hhe","hh_est","hhestimadas"
 ]
 
-# columnas que NO se consideran para fallback numérico
 _IGNORE_KEYS = {
     "sim","similaridad","similarity","cosine","cosinesim",
     "ticket","codigo","id","source","fuente","tipo","texto",
@@ -67,7 +64,6 @@ def _strip_accents(s: str) -> str:
         return s
 
 def _norm_key(k: str) -> str:
-    # normaliza: minúsculas, sin acentos ni separadores
     s = _strip_accents(str(k)).lower()
     return (s.replace(" ", "")
              .replace("_", "")
@@ -77,20 +73,16 @@ def _norm_key(k: str) -> str:
              .replace("’", "")
              .replace("´", ""))
 
-# patrón flexible: hh / hhs / hrs / hora / horas / hours / hhe
 _HOUR_NAME_RX = re.compile(r"(hh|hhs|hrs?|hora|horas|hours|hhe)", re.I)
-# patrón de extracción seguro (con unidad)
 _HOUR_TEXT_RX = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:hh'?s?|hh|hrs?|horas?)", re.I)
 
 def _row_hours(row):
-    # 0) mapa de nombres normalizados -> original
     try:
         keys = list(row.index)
     except Exception:
         keys = list(getattr(row, "keys", lambda: [])())
     norm_map = { _norm_key(k): k for k in keys }
 
-    # 1) match exacto por lista blanca (normalizados)
     for cand in CAND_HOUR_KEYS:
         key_norm = _norm_key(cand)
         for nk, orig in norm_map.items():
@@ -99,14 +91,12 @@ def _row_hours(row):
                 if v > 0:
                     return v
 
-    # 2) match por patrón flexible (p. ej. "hh's", "hh_estimadas", "horas estimadas", etc.)
     for nk, orig in norm_map.items():
         if _HOUR_NAME_RX.search(nk):
             v = _to_float(row.get(orig, 0))
             if v > 0:
                 return v
 
-    # 3) extracción desde cualquier texto que contenga explícitamente la unidad (hh/hrs/horas)
     for k in keys:
         val = row.get(k)
         if isinstance(val, str):
@@ -119,7 +109,6 @@ def _row_hours(row):
                 if v > 0:
                     return v
 
-    # 4) fallback: primer numérico razonable en columnas que no sean obvias de id/sim/texto
     for k in keys:
         nk = _norm_key(k)
         if nk in _IGNORE_KEYS:
@@ -127,7 +116,6 @@ def _row_hours(row):
         v = _to_float(row.get(k, 0))
         if 0 < v < 1000:
             return v
-
     return 0.0
 
 def append_row_safe(row: dict):
@@ -235,7 +223,7 @@ def api_estimate():
                 continue
             row = labeled.loc[idx]
             h_neighbor = _to_float(h)
-            h_row = _row_hours(row)  # ahora captura horas en Comments/Description también
+            h_row = _row_hours(row)
             hours_val = h_neighbor if h_neighbor > 0 else h_row
             sim_val = _to_float(sim)
             tk = str(row.get("ticket",""))
@@ -258,12 +246,20 @@ def api_estimate():
 
     metodo_norm = metodo if metodo in {"faiss","catalog","faiss+catalog"} else "faiss+catalog"
     alpha = _to_float(os.environ.get("HYBRID_ALPHA", "0.8"))
+
+    # 🔹 Nuevo: ajuste dinámico por complejidad
+    complexity = (data.get("complexity") or "media").lower()
+    bias_map = {"baja": -0.1, "media": 0.0, "alta": +0.1}
+    bias = bias_map.get(complexity, 0.0)
+    alpha_eff = max(0.3, min(0.98, alpha + bias))
+
+    # 🔹 Cálculo híbrido con alpha ajustado
     if metodo_norm == "faiss":
         hybrid = horas_faiss
     elif metodo_norm == "catalog":
         hybrid = horas_catalog
     else:
-        hybrid = alpha * horas_faiss + (1.0 - alpha) * horas_catalog
+        hybrid = alpha_eff * horas_faiss + (1.0 - alpha_eff) * horas_catalog
 
     resp = {
         "ok": True,
@@ -273,10 +269,14 @@ def api_estimate():
             "faiss": float(horas_faiss),
             "catalogo": float(horas_catalog),
             "final_sin_redondeo": float(round(_to_float(hybrid), 2)),
-            "alpha": alpha if metodo_norm == "faiss+catalog" else None
+            "alpha": alpha_eff if metodo_norm == "faiss+catalog" else None,
+            "complexity": complexity
         },
         "top": top
     }
+
+    # 🔹 Log informativo
+    print(f"[INFO] tipo={tipo}, complejidad={complexity}, α={alpha_eff:.2f}, horas={resp['horas']}")
     return jsonify(_clean_json(resp))
 
 @app.post("/api/accept")
