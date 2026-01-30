@@ -296,7 +296,7 @@ def load_labeled_dataframe(tag: str) -> pd.DataFrame:
         frames.append(_make_rows(dfc, tcol, hcol, None, source="catalog"))
 
     # 3) Nuevas confirmaciones del usuario (acepta .csv o .cs)
-    new_path = NEW_EST_CSV if NEW_EST_CSV.exists() else (NEW_EST_CS if NEW_EST_CS.exists() else None)
+    new_path = NEW_EST_CSV if NEW_EST_CSV.exists() else None
     if new_path:
         dfn = _read_csv_smart(new_path)
         if "tipo" in dfn.columns:
