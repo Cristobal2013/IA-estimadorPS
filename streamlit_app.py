@@ -4,33 +4,38 @@ import os
 import time
 import math
 
-
-# --- IMPORTAMOS TU LÓGICA EXISTENTE ---
 from app import _lazy_backend, _resolve_tag, _to_float, append_row_safe
 
-# Configuración de la página
-st.set_page_config(page_title="Estimador IA", layout="wide")
+st.set_page_config(
+    page_title="Estimador PS · Sovos",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
-# --- ESTADO DE LA SESIÓN ---
-if 'resultado' not in st.session_state:
-    st.session_state.resultado = None
-if 'resultado_desglose' not in st.session_state:
-    st.session_state.resultado_desglose = None
-if 'tareas' not in st.session_state:
-    st.session_state.tareas = [""]
+# ══════════════════════════════════════════════════════
+# DATOS
+# ══════════════════════════════════════════════════════
+@st.cache_data
+def _load_roles():
+    p = os.path.join(os.path.dirname(__file__), "data", "catalogo_roles.csv")
+    if not os.path.exists(p):
+        return pd.DataFrame()
+    return pd.read_csv(p)
 
 
-# --- FUNCIÓN REUTILIZABLE DE ESTIMACIÓN ---
+# ══════════════════════════════════════════════════════
+# ESTIMACIÓN IA (FAISS / XGB / CATÁLOGO)
+# ══════════════════════════════════════════════════════
 def _estimar_texto(texto, tag, metodo, complexity, backend):
-    Emb        = backend["EmbeddingsFaissEstimator"]
-    est_cat    = backend["estimate_from_catalog"]
-    train_ix   = backend["train_index_per_type"]
-    load_df    = backend["load_labeled_dataframe"]
+    Emb      = backend["EmbeddingsFaissEstimator"]
+    est_cat  = backend["estimate_from_catalog"]
+    train_ix = backend["train_index_per_type"]
+    load_df  = backend["load_labeled_dataframe"]
 
     est = Emb(tag)
     try:
         loaded = est.load()
-    except:
+    except Exception:
         loaded = False
     if not loaded:
         train_ix(full=True)
@@ -48,7 +53,7 @@ def _estimar_texto(texto, tag, metodo, complexity, backend):
                 "ticket": str(row.get("ticket", "N/A")),
                 "hours": float(h),
                 "sim": float(sim),
-                "text": str(row.get("text", ""))[:200] + "..."
+                "text": str(row.get("text", ""))[:200],
             })
 
     horas_catalog = 0.0
@@ -57,22 +62,22 @@ def _estimar_texto(texto, tag, metodo, complexity, backend):
         from estimator import estimate_from_catalog_with_match
         horas_catalog, catalog_match = estimate_from_catalog_with_match(texto, tag, top_n=3, min_cover=0.35)
         horas_catalog = _to_float(horas_catalog)
-    except:
+    except Exception:
         try:
             horas_catalog = _to_float(est_cat(texto, tag, top_n=3, min_cover=0.35))
-        except:
+        except Exception:
             horas_catalog = 0.0
 
     horas_xgb = 0.0
     try:
         from estimator import predict_xgb
         horas_xgb = _to_float(predict_xgb(texto, tag))
-    except:
+    except Exception:
         horas_xgb = 0.0
 
     alpha = 0.8
     bias_map = {"baja": -0.1, "media": 0.0, "alta": +0.1}
-    alpha_eff = max(0.3, min(0.98, alpha + bias_map[complexity]))
+    alpha_eff = max(0.3, min(0.98, alpha + bias_map.get(complexity, 0.0)))
 
     if metodo == "faiss":
         final = horas_faiss
@@ -80,19 +85,15 @@ def _estimar_texto(texto, tag, metodo, complexity, backend):
         final = horas_catalog
     elif metodo == "faiss+catalog":
         final = alpha_eff * horas_faiss + (1.0 - alpha_eff) * horas_catalog
-    else:
+    else:  # faiss+xgb+catalog
         if horas_xgb > 0:
             final = 0.45 * horas_faiss + 0.40 * horas_xgb + 0.15 * horas_catalog
         else:
             final = alpha_eff * horas_faiss + (1.0 - alpha_eff) * horas_catalog
 
-    # Rango de confianza basado en varianza de vecinos FAISS
-    hs_neigh = [item["hours"] for item in top_tickets] if top_tickets else []
-    if len(hs_neigh) >= 2:
-        rango_min = max(0, math.ceil(final * 0.75))
-        rango_max = math.ceil(final * 1.35)
-    else:
-        rango_min = rango_max = math.ceil(final)
+    hs = [item["hours"] for item in top_tickets] if top_tickets else []
+    rango_min = max(0, math.ceil(final * 0.75)) if len(hs) >= 2 else math.ceil(final)
+    rango_max = math.ceil(final * 1.35) if len(hs) >= 2 else math.ceil(final)
 
     return {
         "horas": final,
@@ -106,413 +107,474 @@ def _estimar_texto(texto, tag, metodo, complexity, backend):
     }
 
 
-# --- CARGA CATÁLOGO DE ROLES ---
-@st.cache_data
-def _load_roles():
-    p = os.path.join(os.path.dirname(__file__), "data", "catalogo_roles.csv")
-    if not os.path.exists(p):
-        return pd.DataFrame()
-    return pd.read_csv(p)
+# ══════════════════════════════════════════════════════
+# ESTADO DE SESIÓN
+# ══════════════════════════════════════════════════════
+for _k, _v in {
+    "resultado_libre": None,
+    "resultado_proyecto": None,
+    "tareas_extra": [""],
+}.items():
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
 
-# --- TÍTULO ---
-st.title("🤖 Estimador de Esfuerzo (IA)")
+df_roles = _load_roles()
 
-tab_libre, tab_desglose, tab_roles = st.tabs(["📝 Texto Libre", "📋 Desglose por Tareas", "👥 Calculadora por Roles"])
+# ══════════════════════════════════════════════════════
+# TÍTULO
+# ══════════════════════════════════════════════════════
+st.title("🤖 Estimador de Esfuerzo PS · Sovos")
+
+tab_proy, tab_libre, tab_historial = st.tabs([
+    "📋 Estimador de Proyecto",
+    "📝 Consulta Rápida",
+    "📊 Historial y Precisión",
+])
 
 
-# ══════════════════════════════════════════════════
-# TAB 1 — TEXTO LIBRE (comportamiento original)
-# ══════════════════════════════════════════════════
-with tab_libre:
-    col_izq, col_der = st.columns([2, 1])
+# ══════════════════════════════════════════════════════
+# TAB 1 — ESTIMADOR DE PROYECTO (formulario estructurado)
+# ══════════════════════════════════════════════════════
+with tab_proy:
 
-    with col_izq:
-        texto = st.text_area("Descripción del Requerimiento", height=200,
-                             placeholder="Pega aquí el correo o la descripción del ticket...")
-    with col_der:
-        st.subheader("Configuración")
-        tipo       = st.selectbox("Tipo de Tarea", ["Desarrollo", "Implementación"], key="tipo_libre")
-        metodo     = st.selectbox("Método", ["faiss+xgb+catalog", "faiss+catalog", "faiss", "catalog"], key="met_libre")
-        complexity = st.select_slider("Complejidad", options=["baja", "media", "alta"], value="media", key="cx_libre")
-        btn_estimar = st.button("🚀 Calcular Estimación", use_container_width=True, type="primary", key="btn_libre")
+    # ── Encabezado del proyecto ──────────────────────
+    st.subheader("1️⃣ Datos del Proyecto")
+    c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
+    with c1:
+        nombre_proy = st.text_input(
+            "Nombre del proyecto / Ticket",
+            placeholder="Ej: PSTC-1234 · Cliente ABC",
+            key="nombre_proy",
+        )
+    with c2:
+        tipo_proy = st.selectbox("Tipo", ["Implementación", "Desarrollo"], key="tipo_proy")
+    with c3:
+        integ_proy = st.selectbox(
+            "Integración",
+            ["Full ASP", "Mixto", "On Premise", "Estandar"],
+            key="integ_proy",
+        )
+    with c4:
+        cx_extra = st.select_slider(
+            "Complejidad tareas extra",
+            options=["baja", "media", "alta"],
+            value="media",
+            key="cx_proy",
+        )
 
-    if btn_estimar:
-        if not texto.strip():
-            st.error("⚠️ Por favor ingresa una descripción.")
+    st.divider()
+
+    # ── Sección paquetes + tareas ────────────────────
+    col_paq, col_extra = st.columns([3, 2])
+
+    # ── Paquetes del catálogo
+    with col_paq:
+        st.subheader("2️⃣ Paquetes del Catálogo")
+
+        if df_roles.empty:
+            st.warning("No se encontró catalogo_roles.csv en data/")
         else:
-            with st.spinner("🧠 Analizando..."):
-                try:
-                    backend = _lazy_backend()
-                    if not backend["ok"]:
-                        st.error(f"Error cargando motor IA: {backend.get('err')}")
-                        st.stop()
-                    tag = _resolve_tag(tipo)
-                    res = _estimar_texto(texto, tag, metodo, complexity, backend)
-                    res.update({"texto": texto, "tipo": tag, "metodo": metodo})
-                    st.session_state.resultado = res
-                except Exception as e:
-                    st.error(f"Error durante el cálculo: {str(e)}")
+            paquetes_disp = sorted(df_roles["paquete"].unique())
+            paquetes_sel = st.multiselect(
+                "Selecciona los paquetes del proyecto",
+                options=paquetes_disp,
+                placeholder="Busca o selecciona: Plantillas, PPL, Coapi...",
+                key="paquetes_sel",
+            )
 
-# ══════════════════════════════════════════════════
-# TAB 2 — DESGLOSE POR TAREAS
-# ══════════════════════════════════════════════════
-with tab_desglose:
-    st.markdown("Ingresa cada tarea por separado. El sistema estima cada una y suma el total.")
+            # Guarda qué escenarios están checked
+            escenarios_check: dict = {}
 
-    col_conf1, col_conf2, col_conf3 = st.columns(3)
-    with col_conf1:
-        tipo_d     = st.selectbox("Tipo de Tarea", ["Desarrollo", "Implementación"], key="tipo_des")
-    with col_conf2:
-        metodo_d   = st.selectbox("Método", ["faiss+xgb+catalog", "faiss+catalog", "faiss", "catalog"], key="met_des")
-    with col_conf3:
-        complex_d  = st.select_slider("Complejidad", options=["baja", "media", "alta"], value="media", key="cx_des")
+            for paq in paquetes_sel:
+                subset = df_roles[df_roles["paquete"] == paq]
+                integ_disp = list(subset["integracion"].unique())
 
-    st.markdown("---")
-    st.markdown("**Tareas a estimar:**")
+                # Elegir integración más apropiada para este paquete
+                if integ_proy in integ_disp:
+                    integ_use = integ_proy
+                elif "Estandar" in integ_disp:
+                    integ_use = "Estandar"
+                else:
+                    integ_use = integ_disp[0]
 
-    # Inputs dinámicos de tareas
-    tareas_editadas = []
-    for i, tarea in enumerate(st.session_state.tareas):
-        col_txt, col_del = st.columns([10, 1])
-        with col_txt:
-            val = st.text_input(f"Tarea {i+1}", value=tarea, key=f"tarea_{i}",
-                                placeholder="Ej: Modificar template 3 campos, instalacion UAT PRD...")
-            tareas_editadas.append(val)
-        with col_del:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("✕", key=f"del_{i}", help="Eliminar tarea") and len(st.session_state.tareas) > 1:
-                st.session_state.tareas.pop(i)
-                st.rerun()
+                subset_integ = subset[subset["integracion"] == integ_use]
 
-    st.session_state.tareas = tareas_editadas
+                with st.expander(f"**{paq}** · {integ_use}", expanded=True):
+                    for _, row in subset_integ.iterrows():
+                        esc = row["escenario"]
+                        label = (
+                            f"{esc}  —  "
+                            f"TC: **{row['tc']}h** · SC: **{row['sc']}h** · "
+                            f"PM: **{row['pm']}h**  →  Total: **{row['total']}h**"
+                        )
+                        checked = st.checkbox(label, key=f"chk_{paq}_{esc}")
+                        escenarios_check[(paq, esc, integ_use)] = (checked, row)
 
-    col_add, col_est = st.columns([1, 3])
-    with col_add:
-        if st.button("➕ Agregar tarea"):
-            st.session_state.tareas.append("")
+    # ── Tareas adicionales (IA)
+    with col_extra:
+        st.subheader("3️⃣ Tareas Adicionales (IA)")
+        st.caption(
+            "Para actividades no contempladas en el catálogo. "
+            "La IA estima las horas basándose en tickets históricos."
+        )
+
+        tareas_ed = []
+        for i, t in enumerate(st.session_state.tareas_extra):
+            ct, cd = st.columns([5, 1])
+            with ct:
+                val = st.text_input(
+                    f"Tarea {i + 1}",
+                    value=t,
+                    key=f"textra_{i}",
+                    placeholder="Ej: Soporte post go-live, configuración especial...",
+                )
+                tareas_ed.append(val)
+            with cd:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if (
+                    st.button("✕", key=f"del_extra_{i}", help="Eliminar")
+                    and len(st.session_state.tareas_extra) > 1
+                ):
+                    st.session_state.tareas_extra.pop(i)
+                    st.rerun()
+        st.session_state.tareas_extra = tareas_ed
+
+        if st.button("➕ Agregar tarea", key="add_extra"):
+            st.session_state.tareas_extra.append("")
             st.rerun()
-    with col_est:
-        btn_desglose = st.button("🚀 Estimar todas las tareas", type="primary", use_container_width=True)
 
-    if btn_desglose:
-        tareas_validas = [t.strip() for t in st.session_state.tareas if t.strip()]
-        if not tareas_validas:
-            st.error("⚠️ Ingresa al menos una tarea.")
-        else:
-            with st.spinner(f"🧠 Estimando {len(tareas_validas)} tareas..."):
+        st.markdown("---")
+        metodo_proy = st.selectbox(
+            "Método IA",
+            ["faiss+xgb+catalog", "faiss+catalog", "faiss", "catalog"],
+            key="met_proy",
+        )
+
+    # ── Botón estimar ────────────────────────────────
+    st.divider()
+    _, col_btn = st.columns([4, 1])
+    with col_btn:
+        btn_proy = st.button(
+            "🚀 Estimar Proyecto", type="primary", use_container_width=True, key="btn_proy"
+        )
+
+    # ── Cálculo ──────────────────────────────────────
+    if btn_proy:
+        filas_res: list[dict] = []
+
+        # 1) Paquetes seleccionados del catálogo
+        for (paq, esc, integ_use), (checked, row) in escenarios_check.items():
+            if not checked:
+                continue
+            filas_res.append({
+                "Origen":          "📦 Catálogo",
+                "Paquete / Tarea": f"{paq} · {esc}",
+                "Integración":     integ_use,
+                "TC (h)":          float(row["tc"]),
+                "SC (h)":          float(row["sc"]),
+                "PM (h)":          float(row["pm"]),
+                "Total (h)":       float(row["total"]),
+                "Horas ajustadas": float(row["total"]),
+                "Referencia IA":   "—",
+            })
+
+        # 2) Tareas adicionales → IA
+        tareas_validas = [t.strip() for t in st.session_state.tareas_extra if t.strip()]
+        if tareas_validas:
+            with st.spinner(f"🧠 Estimando {len(tareas_validas)} tarea(s) adicional(es)..."):
                 try:
                     backend = _lazy_backend()
-                    if not backend["ok"]:
+                    if not backend.get("ok"):
                         st.error(f"Error cargando motor IA: {backend.get('err')}")
-                        st.stop()
-                    tag = _resolve_tag(tipo_d)
-                    resultados_desglose = []
-                    for tarea in tareas_validas:
-                        r = _estimar_texto(tarea, tag, metodo_d, complex_d, backend)
-                        resultados_desglose.append({
-                            "tarea": tarea,
-                            "horas": r["horas"],
-                            "faiss": r["faiss"],
-                            "xgb": r["xgb"],
-                            "catalogo": r["catalogo"],
-                            "catalog_match": r.get("catalog_match", ""),
-                        })
-                    st.session_state.resultado_desglose = {
-                        "filas": resultados_desglose,
-                        "tipo": tag,
-                        "metodo": metodo_d,
-                    }
+                    else:
+                        tag_proy = _resolve_tag(tipo_proy)
+                        for tarea in tareas_validas:
+                            r = _estimar_texto(tarea, tag_proy, metodo_proy, cx_extra, backend)
+                            horas_ia = max(1, math.ceil(r["horas"]))
+                            top1 = r["top"][0] if r["top"] else None
+                            ref = f"FAISS:{r['faiss']:.0f}h"
+                            if r["xgb"] > 0:
+                                ref += f" · XGB:{r['xgb']:.0f}h"
+                            if top1:
+                                ref += f" · Ref:{top1['ticket']}({top1['sim']:.2f})"
+                            filas_res.append({
+                                "Origen":          "🤖 IA",
+                                "Paquete / Tarea": tarea,
+                                "Integración":     tipo_proy,
+                                "TC (h)":          horas_ia,
+                                "SC (h)":          0.0,
+                                "PM (h)":          0.0,
+                                "Total (h)":       float(horas_ia),
+                                "Horas ajustadas": float(horas_ia),
+                                "Referencia IA":   ref,
+                            })
                 except Exception as e:
-                    st.error(f"Error: {str(e)}")
+                    st.error(f"Error IA: {e}")
 
-    # Mostrar resultado desglose
-    if st.session_state.resultado_desglose:
-        rd = st.session_state.resultado_desglose
-        st.divider()
-        st.subheader("📊 Desglose por Tarea")
-        st.caption("Puedes ajustar las horas en la columna **'Horas ajustadas'** antes de guardar.")
+        if not filas_res:
+            st.warning("⚠️ Selecciona al menos un escenario del catálogo o agrega una tarea.")
+        else:
+            st.session_state.resultado_proyecto = {
+                "filas":       filas_res,
+                "nombre":      nombre_proy,
+                "tipo":        tipo_proy,
+                "integracion": integ_proy,
+            }
 
+    # ── Resultados del proyecto ──────────────────────
+    if st.session_state.resultado_proyecto:
+        rd = st.session_state.resultado_proyecto
         filas = rd["filas"]
-        total_ia = sum(math.ceil(f["horas"]) for f in filas)
 
-        # Tabla editable con st.data_editor
-        df_edit = pd.DataFrame([{
-            "Tarea":              f["tarea"],
-            "IA estima":          round(f["horas"], 1),
-            "Horas ajustadas":    math.ceil(f["horas"]),
-            "FAISS":              round(f["faiss"], 1),
-            "XGBoost":            round(f["xgb"], 1),
-            "Catálogo":           round(f["catalogo"], 1),
-            "Mejor match catálogo": f.get("catalog_match", "—"),
-        } for f in filas])
+        st.divider()
+        titulo_res = f"📊 Estimación: {rd['nombre']}" if rd["nombre"] else "📊 Estimación del Proyecto"
+        st.subheader(titulo_res)
+        st.caption(f"Tipo: **{rd['tipo']}** · Integración base: **{rd['integracion']}**")
+
+        df_res = pd.DataFrame(filas)
 
         edited = st.data_editor(
-            df_edit,
+            df_res,
             column_config={
                 "Horas ajustadas": st.column_config.NumberColumn(
-                    "Horas ajustadas ✏️", min_value=0, max_value=2000, step=1,
-                    help="Edita este valor para ajustar la estimación"
+                    "Horas ajustadas ✏️",
+                    min_value=0,
+                    max_value=5000,
+                    step=0.5,
+                    help="Edita para ajustar la estimación de cada ítem",
                 ),
+                "Origen":          st.column_config.TextColumn("Origen",     width="small"),
+                "Referencia IA":   st.column_config.TextColumn("Ref. IA",    width="medium"),
+                "Integración":     st.column_config.TextColumn("Integración",width="small"),
             },
-            disabled=["Tarea", "IA estima", "FAISS", "XGBoost", "Catálogo", "Mejor match catálogo"],
+            disabled=[
+                "Origen", "Paquete / Tarea", "Integración",
+                "TC (h)", "SC (h)", "PM (h)", "Total (h)", "Referencia IA",
+            ],
             hide_index=True,
             use_container_width=True,
         )
 
-        total_ajustado = int(edited["Horas ajustadas"].sum())
-        diferencia = total_ajustado - total_ia
+        # Totales
+        total_tc        = df_res["TC (h)"].sum()
+        total_sc        = df_res["SC (h)"].sum()
+        total_pm        = df_res["PM (h)"].sum()
+        total_catalogo  = df_res["Total (h)"].sum()
+        total_ajustado  = edited["Horas ajustadas"].sum()
+        diff = total_ajustado - total_catalogo
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("🤖 Total IA", f"{total_ia}h")
-        c2.metric("✏️ Total Ajustado", f"{total_ajustado}h",
-                  delta=f"{diferencia:+d}h" if diferencia != 0 else "Sin cambios")
-        c3.metric("Tareas", len(filas))
+        st.markdown("---")
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("👷 TC",            f"{total_tc:.1f}h")
+        c2.metric("💼 SC",            f"{total_sc:.1f}h")
+        c3.metric("📋 PM",            f"{total_pm:.1f}h")
+        c4.metric("🔢 Total estimado", f"{total_catalogo:.1f}h")
+        c5.metric(
+            "✏️ Total ajustado",
+            f"{total_ajustado:.1f}h",
+            delta=f"{diff:+.1f}h" if diff != 0 else "Sin cambios",
+        )
 
-        # Guardar feedback del desglose
+        # Gráfico por rol
+        st.bar_chart(
+            pd.DataFrame({"Rol": ["TC", "SC", "PM"], "Horas": [total_tc, total_sc, total_pm]}).set_index("Rol")
+        )
+
+        # Resumen para copiar
+        with st.expander("📋 Copiar resumen"):
+            titulo_copia = rd["nombre"] or "Proyecto"
+            lines = [
+                f"Estimación: {titulo_copia}",
+                f"Tipo: {rd['tipo']} · Integración: {rd['integracion']}",
+                "",
+            ]
+            for f in filas:
+                if f["Origen"] == "📦 Catálogo":
+                    lines.append(
+                        f"• {f['Paquete / Tarea']}: "
+                        f"TC={f['TC (h)']}h | SC={f['SC (h)']}h | PM={f['PM (h)']}h | Total={f['Total (h)']}h"
+                    )
+                else:
+                    lines.append(f"• {f['Paquete / Tarea']}: ~{f['Total (h)']}h (estimado IA)")
+            lines += [
+                "",
+                f"TOTALES POR ROL → TC:{total_tc:.1f}h | SC:{total_sc:.1f}h | PM:{total_pm:.1f}h",
+                f"TOTAL PROYECTO : {total_ajustado:.1f}h",
+            ]
+            st.code("\n".join(lines), language=None)
+
+        # Guardar estimación
         st.divider()
-        st.subheader("💾 Guardar Feedback")
-        with st.form("form_desglose"):
-            col_a, col_b = st.columns(2)
-            with col_a:
-                horas_reales_d = st.number_input("Horas reales totales (una vez terminado)", min_value=0.0, step=0.5, key="hr_des")
-            with col_b:
-                comentarios_d = st.text_input("Comentario / ID ticket", key="com_des")
-            submitted_d = st.form_submit_button("Confirmar y Guardar", type="primary")
-            if submitted_d:
-                texto_combinado = " | ".join(f["tarea"] for f in filas)
-                nueva_fila = {
+        with st.form("form_proy_save"):
+            st.subheader("💾 Guardar Estimación")
+            cp1, cp2 = st.columns(2)
+            with cp1:
+                hr_real_p = st.number_input("Horas reales (post-proyecto)", min_value=0.0, step=1.0)
+            with cp2:
+                com_p = st.text_input("Comentarios")
+            if st.form_submit_button("Guardar", type="primary"):
+                append_row_safe({
                     "timestamp":       time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "tipo":            rd["tipo"],
-                    "texto":           texto_combinado,
+                    "tipo":            _resolve_tag(rd["tipo"]),
+                    "texto":           rd["nombre"],
                     "horas_estimadas": float(total_ajustado),
-                    "horas_reales":    float(horas_reales_d),
-                    "diferencia":      round(float(horas_reales_d) - total_ajustado, 2),
+                    "horas_reales":    float(hr_real_p),
+                    "diferencia":      round(float(hr_real_p) - total_ajustado, 2),
                     "top_ticket":      "",
                     "top_sim":         0,
-                    "metodo":          rd["metodo"],
-                    "autor":           "streamlit_desglose",
-                    "comentarios":     comentarios_d,
-                }
-                try:
-                    append_row_safe(nueva_fila)
-                    st.success("✅ Guardado correctamente.")
-                except Exception as e:
-                    st.error(f"Error guardando: {e}")
-
-
-# ══════════════════════════════════════════════════
-# TAB 3 — CALCULADORA POR ROLES (TC / SC / PM)
-# ══════════════════════════════════════════════════
-with tab_roles:
-    st.markdown("Selecciona los paquetes del proyecto y obtén las horas por rol **(TC / SC / PM)**.")
-
-    df_roles = _load_roles()
-    if df_roles.empty:
-        st.warning("No se encontró catalogo_roles.csv en la carpeta data/")
-    else:
-        paquetes_disponibles = sorted(df_roles["paquete"].unique())
-        integraciones_disponibles = sorted(df_roles["integracion"].unique())
-
-        col_r1, col_r2 = st.columns([2, 1])
-        with col_r1:
-            paquetes_sel = st.multiselect(
-                "Paquetes del proyecto",
-                options=paquetes_disponibles,
-                placeholder="Ej: Reclamaciones, Plantillas, Implem_Standard PPL..."
-            )
-        with col_r2:
-            integ_sel = st.selectbox(
-                "Tipo de integración",
-                options=["Full ASP", "Mixto", "On Premise", "Estandar"],
-                index=0
-            )
-
-        if paquetes_sel:
-            st.markdown("---")
-            filas_roles = []
-            for paq in paquetes_sel:
-                subset = df_roles[df_roles["paquete"] == paq]
-                # Intentar con la integración seleccionada, si no existe usar Estandar
-                match = subset[subset["integracion"] == integ_sel]
-                if match.empty:
-                    match = subset[subset["integracion"] == "Estandar"]
-                if match.empty:
-                    match = subset  # cualquier integración disponible
-
-                for _, row in match.iterrows():
-                    filas_roles.append({
-                        "Paquete":    row["paquete"],
-                        "Escenario":  row["escenario"],
-                        "Integración": row["integracion"],
-                        "TC (h)":     row["tc"],
-                        "SC (h)":     row["sc"],
-                        "PM (h)":     row["pm"],
-                        "Total (h)":  row["total"],
-                    })
-
-            if filas_roles:
-                df_tabla_roles = pd.DataFrame(filas_roles)
-                st.subheader("📊 Desglose por Paquete y Rol")
-                st.dataframe(df_tabla_roles, use_container_width=True, hide_index=True)
-
-                # Totales
-                total_tc  = df_tabla_roles["TC (h)"].sum()
-                total_sc  = df_tabla_roles["SC (h)"].sum()
-                total_pm  = df_tabla_roles["PM (h)"].sum()
-                total_all = df_tabla_roles["Total (h)"].sum()
-
-                st.markdown("---")
-                st.subheader("⏱️ Totales del Proyecto")
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("👷 TC", f"{total_tc:.1f}h")
-                c2.metric("💼 SC", f"{total_sc:.1f}h")
-                c3.metric("📋 PM", f"{total_pm:.1f}h")
-                c4.metric("🔢 Total", f"{total_all:.1f}h")
-
-                # Gráfico de barras por rol
-                df_bar = pd.DataFrame({
-                    "Rol": ["TC", "SC", "PM"],
-                    "Horas": [total_tc, total_sc, total_pm]
+                    "metodo":          "catalogo_proyecto",
+                    "autor":           "streamlit_proyecto",
+                    "comentarios":     com_p,
                 })
-                st.bar_chart(df_bar.set_index("Rol"))
-
-                # Exportar como texto para copiar
-                with st.expander("📋 Copiar resumen"):
-                    resumen = f"Proyecto: {', '.join(paquetes_sel)}\n"
-                    resumen += f"Integración: {integ_sel}\n\n"
-                    for _, r in df_tabla_roles.iterrows():
-                        resumen += f"• {r['Paquete']} - {r['Escenario']}: TC={r['TC (h)']}h | SC={r['SC (h)']}h | PM={r['PM (h)']}h\n"
-                    resumen += f"\nTOTAL → TC: {total_tc:.1f}h | SC: {total_sc:.1f}h | PM: {total_pm:.1f}h | TOTAL: {total_all:.1f}h"
-                    st.code(resumen, language=None)
+                st.success("✅ Guardado correctamente.")
 
 
-# --- MOSTRAR RESULTADOS TAB LIBRE ---
-if st.session_state.resultado:
-    res = st.session_state.resultado
-    
-    st.divider()
-    
-    # Métricas grandes
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("⏱️ Estimación Final", f"{math.ceil(res['horas'])} hrs")
-    m2.metric("📚 FAISS (similitud)", f"{res['faiss']:.1f} hrs")
-    m3.metric("🤖 XGBoost (regresión)", f"{res.get('xgb', 0):.1f} hrs")
-    m4.metric("📋 Catálogo", f"{res['catalogo']:.1f} hrs")
-
-    # Rango de confianza y match catálogo
-    rmin = res.get("rango_min", math.ceil(res["horas"]))
-    rmax = res.get("rango_max", math.ceil(res["horas"]))
-    cat_match = res.get("catalog_match", "")
-    info_parts = [f"**Rango probable:** {rmin}h — {rmax}h"]
-    if cat_match:
-        info_parts.append(f"**Mejor match catálogo:** _{cat_match}_")
-    st.info("  ·  ".join(info_parts))
-
-    # Tabla de tickets similares
-    st.subheader("Tickets Similares Encontrados")
-    if res['top']:
-        for item in res['top']:
-            with st.expander(f"{item['ticket']} ({item['hours']} hrs) - Similitud: {item['sim']:.2f}"):
-                st.write(f"**Texto:** {item['text']}")
-    else:
-        st.info("No se encontraron tickets similares relevantes.")
-
-    # --- SECCIÓN DE GUARDADO (FEEDBACK) ---
-    st.divider()
-    st.subheader("💾 Guardar Feedback")
-    st.caption("Ingresa las horas reales una vez terminado el ticket. Esto mejora el modelo con el tiempo.")
-
-    with st.form("form_guardar"):
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.metric("Estimación IA", f"{math.ceil(res['horas'])} h")
-        with c2:
-            horas_reales = st.number_input("Horas reales que tomó", min_value=0.0, step=0.5,
-                                           help="¿Cuántas horas tomó realmente el ticket?")
-        with c3:
-            comentarios = st.text_input("Comentario / ID ticket")
-
-        submitted = st.form_submit_button("Confirmar y Guardar", type="primary")
-
-        if submitted:
-            horas_estimadas = float(math.ceil(res['horas']))
-            nueva_fila = {
-                "timestamp":       time.strftime("%Y-%m-%d %H:%M:%S"),
-                "tipo":            res['tipo'],
-                "texto":           res['texto'],
-                "horas_estimadas": horas_estimadas,
-                "horas_reales":    float(horas_reales),
-                "diferencia":      round(float(horas_reales) - horas_estimadas, 2),
-                "top_ticket":      res['top'][0]['ticket'] if res['top'] else "",
-                "top_sim":         res['top'][0]['sim'] if res['top'] else 0,
-                "metodo":          res['metodo'],
-                "autor":           "streamlit_ui",
-                "comentarios":     comentarios,
-            }
-            try:
-                append_row_safe(nueva_fila)
-
-                # Actualiza el índice FAISS de forma incremental (sin reconstruir todo)
-                if horas_reales > 0:
-                    try:
-                        backend = _lazy_backend()
-                        if backend["ok"]:
-                            Emb = backend["EmbeddingsFaissEstimator"]
-                            est = Emb(res['tipo'])
-                            if est.load():
-                                # Usa horas_reales si hay, si no usa estimadas
-                                est.add_one(res['texto'], float(horas_reales))
-                                st.success(f"✅ Guardado e índice actualizado con {horas_reales}h reales.")
-                            else:
-                                st.success("✅ Guardado. Índice se actualizará en el próximo reentrenamiento.")
-                        else:
-                            st.success("✅ Guardado.")
-                    except Exception as e_idx:
-                        st.success(f"✅ Guardado. (Índice no actualizado: {e_idx})")
-                else:
-                    st.success("✅ Guardado. Ingresa horas reales para mejorar el modelo.")
-            except Exception as e:
-                st.error(f"Error guardando: {e}")
-
-# --- MÉTRICAS DE PRECISIÓN DEL MODELO ---
-csv_path = "data/estimaciones_nuevas.csv"
-if os.path.exists(csv_path):
-    try:
-        df_fb = pd.read_csv(csv_path)
-        if "horas_reales" in df_fb.columns and "horas_estimadas" in df_fb.columns:
-            df_valid = df_fb[(df_fb["horas_reales"] > 0) & (df_fb["horas_estimadas"] > 0)].copy()
-            if len(df_valid) >= 3:
-                st.divider()
-                st.subheader("📊 Precisión del Modelo")
-                df_valid["error_abs"] = (df_valid["horas_reales"] - df_valid["horas_estimadas"]).abs()
-                df_valid["error_pct"] = df_valid["error_abs"] / df_valid["horas_reales"] * 100
-                mae  = df_valid["error_abs"].mean()
-                mape = df_valid["error_pct"].mean()
-                bias = (df_valid["horas_estimadas"] - df_valid["horas_reales"]).mean()
-                n    = len(df_valid)
-                a1, a2, a3, a4 = st.columns(4)
-                a1.metric("Registros con feedback", n)
-                a2.metric("Error promedio (MAE)", f"{mae:.1f} h")
-                a3.metric("Error % promedio", f"{mape:.0f}%")
-                tendencia = f"+{bias:.1f}h (sobreestima)" if bias > 0.5 else (f"{bias:.1f}h (subestima)" if bias < -0.5 else "Calibrado ✓")
-                a4.metric("Tendencia", tendencia)
-                st.caption(f"Basado en {n} confirmaciones con horas reales ingresadas.")
-    except Exception:
-        pass
-
-# --- DESCARGA DE DATOS (IMPORTANTE PARA PERSISTENCIA) ---
-st.divider()
-st.subheader("📥 Descargar Datos")
-st.markdown("Streamlit borra los archivos al reiniciarse. **Descarga tu CSV regularmente.**")
-
-csv_path = "data/estimaciones_nuevas.csv"
-if os.path.exists(csv_path):
-    with open(csv_path, "rb") as f:
-        st.download_button(
-            label="Descargar estimaciones_nuevas.csv",
-            data=f,
-            file_name="estimaciones_nuevas.csv",
-            mime="text/csv"
+# ══════════════════════════════════════════════════════
+# TAB 2 — CONSULTA RÁPIDA (texto libre)
+# ══════════════════════════════════════════════════════
+with tab_libre:
+    col_izq, col_der = st.columns([2, 1])
+    with col_izq:
+        texto_libre = st.text_area(
+            "Descripción del Requerimiento",
+            height=200,
+            placeholder="Pega aquí el correo o la descripción del ticket...",
         )
-else:
-    st.info("Aún no hay estimaciones guardadas para descargar.")
+    with col_der:
+        st.subheader("Configuración")
+        tipo_l    = st.selectbox("Tipo de Tarea", ["Desarrollo", "Implementación"], key="tipo_libre")
+        metodo_l  = st.selectbox("Método", ["faiss+xgb+catalog", "faiss+catalog", "faiss", "catalog"], key="met_libre")
+        complex_l = st.select_slider("Complejidad", options=["baja", "media", "alta"], value="media", key="cx_libre")
+        btn_libre = st.button("🚀 Calcular Estimación", use_container_width=True, type="primary", key="btn_libre")
+
+    if btn_libre:
+        if not texto_libre.strip():
+            st.error("⚠️ Ingresa una descripción.")
+        else:
+            with st.spinner("🧠 Analizando..."):
+                try:
+                    backend = _lazy_backend()
+                    if not backend.get("ok"):
+                        st.error(f"Error cargando motor: {backend.get('err')}")
+                        st.stop()
+                    tag_l = _resolve_tag(tipo_l)
+                    res_l = _estimar_texto(texto_libre, tag_l, metodo_l, complex_l, backend)
+                    res_l.update({"texto": texto_libre, "tipo": tag_l, "metodo": metodo_l})
+                    st.session_state.resultado_libre = res_l
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+    if st.session_state.resultado_libre:
+        res = st.session_state.resultado_libre
+        st.divider()
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("⏱️ Estimación Final", f"{math.ceil(res['horas'])} hrs")
+        m2.metric("📚 FAISS",            f"{res['faiss']:.1f} hrs")
+        m3.metric("🤖 XGBoost",          f"{res.get('xgb', 0):.1f} hrs")
+        m4.metric("📋 Catálogo",         f"{res['catalogo']:.1f} hrs")
+
+        rmin = res.get("rango_min", math.ceil(res["horas"]))
+        rmax = res.get("rango_max", math.ceil(res["horas"]))
+        info_parts = [f"**Rango probable:** {rmin}h — {rmax}h"]
+        if res.get("catalog_match"):
+            info_parts.append(f"**Mejor match catálogo:** _{res['catalog_match']}_")
+        st.info("  ·  ".join(info_parts))
+
+        if res["top"]:
+            st.subheader("Tickets Similares Encontrados")
+            for item in res["top"]:
+                with st.expander(f"{item['ticket']} ({item['hours']}h) — Similitud: {item['sim']:.2f}"):
+                    st.write(item["text"])
+
+        st.divider()
+        with st.form("form_libre_save"):
+            st.subheader("💾 Guardar Feedback")
+            fl1, fl2, fl3 = st.columns(3)
+            with fl1:
+                st.metric("Estimación IA", f"{math.ceil(res['horas'])}h")
+            with fl2:
+                hr_real_l = st.number_input("Horas reales que tomó", min_value=0.0, step=0.5)
+            with fl3:
+                com_l = st.text_input("Comentario / ID ticket")
+            if st.form_submit_button("Confirmar y Guardar", type="primary"):
+                horas_est = float(math.ceil(res["horas"]))
+                append_row_safe({
+                    "timestamp":       time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "tipo":            res["tipo"],
+                    "texto":           res["texto"],
+                    "horas_estimadas": horas_est,
+                    "horas_reales":    float(hr_real_l),
+                    "diferencia":      round(float(hr_real_l) - horas_est, 2),
+                    "top_ticket":      res["top"][0]["ticket"] if res["top"] else "",
+                    "top_sim":         res["top"][0]["sim"]    if res["top"] else 0,
+                    "metodo":          res["metodo"],
+                    "autor":           "streamlit_ui",
+                    "comentarios":     com_l,
+                })
+                if hr_real_l > 0:
+                    try:
+                        bk = _lazy_backend()
+                        if bk.get("ok"):
+                            est_obj = bk["EmbeddingsFaissEstimator"](res["tipo"])
+                            if est_obj.load():
+                                est_obj.add_one(res["texto"], float(hr_real_l))
+                                st.success("✅ Guardado e índice actualizado.")
+                                st.stop()
+                    except Exception:
+                        pass
+                st.success("✅ Guardado.")
+
+
+# ══════════════════════════════════════════════════════
+# TAB 3 — HISTORIAL Y PRECISIÓN
+# ══════════════════════════════════════════════════════
+with tab_historial:
+    csv_path = os.path.join(os.path.dirname(__file__), "data", "estimaciones_nuevas.csv")
+
+    if os.path.exists(csv_path):
+        try:
+            df_fb = pd.read_csv(csv_path)
+            if "horas_reales" in df_fb.columns and "horas_estimadas" in df_fb.columns:
+                df_v = df_fb[(df_fb["horas_reales"] > 0) & (df_fb["horas_estimadas"] > 0)].copy()
+                if len(df_v) >= 3:
+                    st.subheader("📊 Precisión del Modelo")
+                    df_v["error_abs"] = (df_v["horas_reales"] - df_v["horas_estimadas"]).abs()
+                    df_v["error_pct"] = df_v["error_abs"] / df_v["horas_reales"] * 100
+                    mae  = df_v["error_abs"].mean()
+                    mape = df_v["error_pct"].mean()
+                    bias = (df_v["horas_estimadas"] - df_v["horas_reales"]).mean()
+                    n    = len(df_v)
+
+                    h1, h2, h3, h4 = st.columns(4)
+                    h1.metric("Estimaciones con feedback", n)
+                    h2.metric("Error promedio (MAE)",       f"{mae:.1f}h")
+                    h3.metric("Error % promedio",            f"{mape:.0f}%")
+                    tendencia = (
+                        f"+{bias:.1f}h (sobreestima)" if bias > 0.5
+                        else (f"{bias:.1f}h (subestima)" if bias < -0.5 else "Calibrado ✓")
+                    )
+                    h4.metric("Tendencia", tendencia)
+
+                    st.subheader("Últimas 20 estimaciones")
+                    st.dataframe(df_fb.tail(20), use_container_width=True, hide_index=True)
+                else:
+                    st.info("Se necesitan al menos 3 estimaciones con horas reales para mostrar métricas.")
+        except Exception:
+            pass
+    else:
+        st.info("Aún no hay estimaciones guardadas.")
+
+    st.divider()
+    st.subheader("📥 Descargar Datos")
+    st.caption("Streamlit borra los archivos al reiniciarse. Descarga tu CSV regularmente.")
+    if os.path.exists(csv_path):
+        with open(csv_path, "rb") as f:
+            st.download_button(
+                label="⬇️ Descargar estimaciones_nuevas.csv",
+                data=f,
+                file_name="estimaciones_nuevas.csv",
+                mime="text/csv",
+            )
+    else:
+        st.info("Aún no hay datos para descargar.")
