@@ -492,9 +492,9 @@ with tab_proy:
                     "Origen":          "📦 Catálogo",
                     "Paquete / Tarea": f"{paq} · {esc}",
                     "Integración":     row["integracion"],
-                    "TC (h)":          float(row["tc"]),
-                    "SC (h)":          float(row["sc"]),
-                    "PM (h)":          float(row["pm"]),
+                    "TC (h)":          int(round(float(row["tc"]))),
+                    "SC (h)":          int(round(float(row["sc"]))),
+                    "PM (h)":          int(round(float(row["pm"]))),
                     "Referencia IA":   "—",
                 })
 
@@ -522,9 +522,9 @@ with tab_proy:
                                     "Origen":          f"✏️ Manual ({ajuste_manual['rol']})",
                                     "Paquete / Tarea": tarea,
                                     "Integración":     tipo_t,
-                                    "TC (h)":          ajuste_manual["tc"],
-                                    "SC (h)":          ajuste_manual["sc"],
-                                    "PM (h)":          ajuste_manual["pm"],
+                                    "TC (h)":          int(round(ajuste_manual["tc"])),
+                                    "SC (h)":          int(round(ajuste_manual["sc"])),
+                                    "PM (h)":          int(round(ajuste_manual["pm"])),
                                     "Referencia IA":   f"Ajuste directo {ajuste_manual['rol']}",
                                 })
                                 continue
@@ -541,9 +541,9 @@ with tab_proy:
                                 ref += f" · Ref:{top1['ticket']}({top1['sim']:.2f})"
 
                             # Distribución fija: la dificultad va a TC
-                            tc_h = round(horas_ia * 0.75, 1)
-                            sc_h = round(horas_ia * 0.20, 1)
-                            pm_h = round(horas_ia * 0.05, 1)
+                            tc_h = int(round(horas_ia * 0.75))
+                            sc_h = int(round(horas_ia * 0.20))
+                            pm_h = int(round(horas_ia * 0.05))
 
                             filas_res.append({
                                 "Origen":          f"🤖 IA ({tipo_t[:4]})",
