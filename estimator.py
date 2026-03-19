@@ -505,8 +505,13 @@ def _build_from_frame(tag: str, df: pd.DataFrame) -> int:
     if df.empty:
         pd.DataFrame(columns=["text","hours","ticket","source"]).to_csv(_dataset_path(tag), index=False, encoding="utf-8")
         return 0
+    # Filtra tickets sin horas registradas — no aportan a la estimación
+    df = df[df["hours"].apply(lambda x: x is not None and not pd.isna(x) and float(x) > 0)].reset_index(drop=True)
+    if df.empty:
+        pd.DataFrame(columns=["text","hours","ticket","source"]).to_csv(_dataset_path(tag), index=False, encoding="utf-8")
+        return 0
     texts = df["text"].astype(str).tolist()
-    hours = [float(h) if h is not None and not pd.isna(h) else 0.0 for h in df["hours"].tolist()]
+    hours = [float(h) for h in df["hours"].tolist()]
 
     # Intenta cargar embeddings desde caché (evita recalcular si los datos no cambiaron)
     h = _texts_hash(texts)
