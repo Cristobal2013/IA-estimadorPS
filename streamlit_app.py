@@ -176,6 +176,107 @@ def _get_role_ratios(texto: str, df_roles: pd.DataFrame, integ_pref: str):
 
 
 # ══════════════════════════════════════════════════════
+# AJUSTE INTELIGENTE DE HORAS (overhead compartido)
+# ══════════════════════════════════════════════════════
+def _ajuste_proyecto(filas: list) -> dict:
+    """
+    Para proyectos multi-paquete, el overhead de PM (kickoff, SOW, cierre)
+    no se multiplica por cada paquete — se comparte. El paquete más pesado
+    'dueña' el overhead completo; los adicionales solo aportan su trabajo
+    técnico específico (~30% del PM incremental).
+    TC y SC sí son aditivos porque el trabajo técnico/solución es único por paquete.
+    """
+    filas_cat = [f for f in filas if f["Origen"] == "📦 Catálogo"]
+    filas_ia  = [f for f in filas if f["Origen"] != "📦 Catálogo"]
+
+    total_tc_raw = sum(f["TC (h)"] for f in filas)
+    total_sc_raw = sum(f["SC (h)"] for f in filas)
+    total_pm_raw = sum(f["PM (h)"] for f in filas)
+
+    n_cat = len(filas_cat)
+    if n_cat <= 1:
+        return {
+            "tc": total_tc_raw, "sc": total_sc_raw, "pm": total_pm_raw,
+            "total_raw": total_tc_raw + total_sc_raw + total_pm_raw,
+            "total_ajustado": total_tc_raw + total_sc_raw + total_pm_raw,
+            "ahorro_pm": 0.0, "nota": "",
+        }
+
+    # PM ajustado: el mayor paquete paga el 100%, los demás el 30%
+    pms_cat = sorted([f["PM (h)"] for f in filas_cat], reverse=True)
+    pm_cat_ajustado = pms_cat[0] + sum(p * 0.30 for p in pms_cat[1:])
+    pm_ia = sum(f["PM (h)"] for f in filas_ia)
+    pm_total_ajustado = round(pm_cat_ajustado + pm_ia, 1)
+    ahorro = round(total_pm_raw - pm_total_ajustado, 1)
+
+    nota = (
+        f"PM reducido en **{ahorro:.1f}h** por overhead compartido entre "
+        f"{n_cat} paquetes (kickoff, SOW, cierre son una sola vez)."
+    )
+    return {
+        "tc": total_tc_raw,
+        "sc": total_sc_raw,
+        "pm": pm_total_ajustado,
+        "total_raw": total_tc_raw + total_sc_raw + total_pm_raw,
+        "total_ajustado": total_tc_raw + total_sc_raw + pm_total_ajustado,
+        "ahorro_pm": ahorro,
+        "nota": nota,
+    }
+
+
+# ══════════════════════════════════════════════════════
+# ANÁLISIS GEMINI DEL PROYECTO COMPLETO
+# ══════════════════════════════════════════════════════
+def _gemini_proyecto(nombre: str, integ: str, filas: list, ajuste: dict) -> str | None:
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        return None
+
+    lineas = []
+    for f in filas:
+        if f["Origen"] == "📦 Catálogo":
+            lineas.append(
+                f"  • {f['Paquete / Tarea']} ({f['Integración']}): "
+                f"TC={f['TC (h)']}h | SC={f['SC (h)']}h | PM={f['PM (h)']}h"
+            )
+        else:
+            lineas.append(f"  • [IA] {f['Paquete / Tarea']}: ~{f['Total (h)']}h")
+
+    prompt = f"""Eres experto en estimación de proyectos PS para Sovos (Latinoamérica).
+
+PROYECTO: {nombre or 'Sin nombre'}
+INTEGRACIÓN: {integ}
+
+COMPONENTES SELECCIONADOS:
+{chr(10).join(lineas)}
+
+SUMA CRUDA: TC={ajuste['tc']:.1f}h | SC={ajuste['sc']:.1f}h | PM={ajuste['total_raw'] - ajuste['tc'] - ajuste['sc']:.1f}h | Total={ajuste['total_raw']:.1f}h
+ESTIMACIÓN AJUSTADA (overhead PM compartido): Total={ajuste['total_ajustado']:.1f}h
+
+Analiza este proyecto y responde con estas 3 secciones:
+
+**1. Solapamientos detectados**
+¿Hay configuraciones o actividades que aplican a múltiples paquetes y podrían ejecutarse en paralelo o una sola vez?
+
+**2. Riesgos que podrían aumentar el esfuerzo**
+Máximo 3 puntos. Sé específico al tipo de integración y paquetes seleccionados.
+
+**3. Rango recomendado**
+TC: Xh–Xh | SC: Xh–Xh | PM: Xh–Xh | Total: Xh–Xh (mínimo–máximo)
+Una oración explicando el rango.
+
+Responde en español, máximo 220 palabras. Sin introducción."""
+
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.0-flash")
+        return model.generate_content(prompt).text
+    except Exception as e:
+        return f"_(Error Gemini: {e})_"
+
+
+# ══════════════════════════════════════════════════════
 # ESTADO DE SESIÓN
 # ══════════════════════════════════════════════════════
 for _k, _v in {
@@ -453,30 +554,64 @@ with tab_proy:
             use_container_width=True,
         )
 
-        # Totales
-        total_tc        = df_res["TC (h)"].sum()
-        total_sc        = df_res["SC (h)"].sum()
-        total_pm        = df_res["PM (h)"].sum()
-        total_catalogo  = df_res["Total (h)"].sum()
-        total_ajustado  = edited["Horas ajustadas"].sum()
-        diff = total_ajustado - total_catalogo
+        # ── Totales brutos
+        total_tc       = df_res["TC (h)"].sum()
+        total_sc       = df_res["SC (h)"].sum()
+        total_pm       = df_res["PM (h)"].sum()
+        total_catalogo = df_res["Total (h)"].sum()
+        total_manual   = edited["Horas ajustadas"].sum()
+
+        # ── Ajuste inteligente (overhead PM compartido)
+        ajuste = _ajuste_proyecto(filas)
 
         st.markdown("---")
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("👷 TC",            f"{total_tc:.1f}h")
-        c2.metric("💼 SC",            f"{total_sc:.1f}h")
-        c3.metric("📋 PM",            f"{total_pm:.1f}h")
-        c4.metric("🔢 Total estimado", f"{total_catalogo:.1f}h")
-        c5.metric(
-            "✏️ Total ajustado",
-            f"{total_ajustado:.1f}h",
-            delta=f"{diff:+.1f}h" if diff != 0 else "Sin cambios",
-        )
+        st.subheader("⏱️ Totales por Rol")
 
-        # Gráfico por rol
-        st.bar_chart(
-            pd.DataFrame({"Rol": ["TC", "SC", "PM"], "Horas": [total_tc, total_sc, total_pm]}).set_index("Rol")
-        )
+        col_raw, col_adj = st.columns(2)
+        with col_raw:
+            st.caption("**Suma directa (sin ajuste)**")
+            r1, r2, r3, r4 = st.columns(4)
+            r1.metric("👷 TC", f"{total_tc:.1f}h")
+            r2.metric("💼 SC", f"{total_sc:.1f}h")
+            r3.metric("📋 PM", f"{total_pm:.1f}h")
+            r4.metric("🔢 Total", f"{total_catalogo:.1f}h")
+
+        with col_adj:
+            st.caption("**Estimación ajustada (overhead compartido)**")
+            a1, a2, a3, a4 = st.columns(4)
+            a1.metric("👷 TC", f"{ajuste['tc']:.1f}h")
+            a2.metric("💼 SC", f"{ajuste['sc']:.1f}h")
+            a3.metric("📋 PM", f"{ajuste['pm']:.1f}h",
+                      delta=f"-{ajuste['ahorro_pm']:.1f}h" if ajuste["ahorro_pm"] > 0 else None,
+                      delta_color="inverse")
+            a4.metric("🔢 Total", f"{ajuste['total_ajustado']:.1f}h",
+                      delta=f"-{ajuste['total_raw'] - ajuste['total_ajustado']:.1f}h" if ajuste["ahorro_pm"] > 0 else None,
+                      delta_color="inverse")
+
+        if ajuste["nota"]:
+            st.info(f"💡 {ajuste['nota']}")
+
+        if total_manual != total_catalogo:
+            st.caption(f"✏️ Total con tus ajustes manuales: **{total_manual:.1f}h**")
+
+        # Gráfico comparativo
+        df_chart = pd.DataFrame({
+            "Rol":      ["TC", "SC", "PM"],
+            "Suma directa":  [total_tc,       total_sc,       total_pm],
+            "Ajustado":      [ajuste["tc"],   ajuste["sc"],   ajuste["pm"]],
+        }).set_index("Rol")
+        st.bar_chart(df_chart)
+
+        # ── Análisis Gemini
+        st.divider()
+        st.subheader("🧠 Análisis IA del Proyecto")
+        if os.environ.get("GEMINI_API_KEY"):
+            with st.spinner("Analizando el proyecto con IA..."):
+                analisis = _gemini_proyecto(rd["nombre"], rd["integracion"], filas, ajuste)
+            if analisis:
+                st.markdown(analisis)
+        else:
+            st.caption("_(Configura GEMINI_API_KEY para obtener análisis de solapamientos y riesgos)_")
 
         # Resumen para copiar
         with st.expander("📋 Copiar resumen"):
@@ -496,8 +631,8 @@ with tab_proy:
                     lines.append(f"• {f['Paquete / Tarea']}: ~{f['Total (h)']}h (estimado IA)")
             lines += [
                 "",
-                f"TOTALES POR ROL → TC:{total_tc:.1f}h | SC:{total_sc:.1f}h | PM:{total_pm:.1f}h",
-                f"TOTAL PROYECTO : {total_ajustado:.1f}h",
+                f"SUMA DIRECTA   → TC:{total_tc:.1f}h | SC:{total_sc:.1f}h | PM:{total_pm:.1f}h | Total:{total_catalogo:.1f}h",
+                f"AJUSTADO       → TC:{ajuste['tc']:.1f}h | SC:{ajuste['sc']:.1f}h | PM:{ajuste['pm']:.1f}h | Total:{ajuste['total_ajustado']:.1f}h",
             ]
             st.code("\n".join(lines), language=None)
 
