@@ -176,6 +176,39 @@ def _get_role_ratios(texto: str, df_roles: pd.DataFrame, integ_pref: str):
 
 
 # ══════════════════════════════════════════════════════
+# PARSER DE AJUSTE MANUAL POR ROL
+# ══════════════════════════════════════════════════════
+def _parse_ajuste_rol(texto: str) -> dict | None:
+    """
+    Detecta si el texto describe un ajuste directo de horas a un rol específico.
+    Ejemplos reconocidos:
+      "5 horas SC", "SC +3h reuniones", "añadir 4h a TC", "PM 2 horas gestión"
+    Retorna dict con tc/sc/pm/total o None si no detecta patrón.
+    """
+    import re
+
+    t = texto.lower().strip()
+
+    # Extraer primer número (incluye decimales)
+    num = re.search(r"(\d+(?:[.,]\d+)?)", t)
+    if not num:
+        return None
+    horas = float(num.group(1).replace(",", "."))
+    if horas <= 0:
+        return None
+
+    # Detectar rol explícito
+    if re.search(r"\bsc\b", t):
+        return {"tc": 0.0, "sc": horas, "pm": 0.0, "total": horas, "rol": "SC"}
+    if re.search(r"\btc\b", t):
+        return {"tc": horas, "sc": 0.0, "pm": 0.0, "total": horas, "rol": "TC"}
+    if re.search(r"\bpm\b", t):
+        return {"tc": 0.0, "sc": 0.0, "pm": horas, "total": horas, "rol": "PM"}
+
+    return None  # sin rol explícito → usar FAISS
+
+
+# ══════════════════════════════════════════════════════
 # AJUSTE INTELIGENTE DE HORAS (overhead compartido)
 # ══════════════════════════════════════════════════════
 def _ajuste_proyecto(filas: list) -> dict:
@@ -464,8 +497,26 @@ with tab_proy:
                         st.error(f"Error cargando motor IA: {backend.get('err')}")
                     else:
                         for tarea_item in tareas_validas:
-                            tarea    = tarea_item["texto"].strip()
-                            tipo_t   = tarea_item.get("tipo", "Implementación")
+                            tarea  = tarea_item["texto"].strip()
+                            tipo_t = tarea_item.get("tipo", "Implementación")
+
+                            # ── Detectar ajuste manual por rol (ej: "5h SC reuniones")
+                            ajuste_manual = _parse_ajuste_rol(tarea)
+                            if ajuste_manual:
+                                filas_res.append({
+                                    "Origen":          f"✏️ Manual ({ajuste_manual['rol']})",
+                                    "Paquete / Tarea": tarea,
+                                    "Integración":     tipo_t,
+                                    "TC (h)":          ajuste_manual["tc"],
+                                    "SC (h)":          ajuste_manual["sc"],
+                                    "PM (h)":          ajuste_manual["pm"],
+                                    "Total (h)":       ajuste_manual["total"],
+                                    "Horas ajustadas": ajuste_manual["total"],
+                                    "Referencia IA":   f"Ajuste directo {ajuste_manual['rol']}",
+                                })
+                                continue
+
+                            # ── Sin patrón de rol → estimar con FAISS/XGB
                             tag_proy = _resolve_tag(tipo_t)
                             r = _estimar_texto(tarea, tag_proy, metodo_proy, cx_extra, backend)
                             horas_ia = max(1, math.ceil(r["horas"]))
@@ -476,7 +527,6 @@ with tab_proy:
                             if top1:
                                 ref += f" · Ref:{top1['ticket']}({top1['sim']:.2f})"
 
-                            # Distribuir horas por rol según paquete más similar
                             tc_r, sc_r, pm_r, matched = _get_role_ratios(tarea, df_roles, integ_proy)
                             tc_h = round(horas_ia * tc_r, 1)
                             sc_h = round(horas_ia * sc_r, 1)
