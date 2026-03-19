@@ -340,17 +340,9 @@ tab_proy, tab_libre, tab_historial = st.tabs([
 with tab_proy:
 
     # ── Encabezado ───────────────────────────────────
-    h1, h2, h3, h4 = st.columns([4, 1, 1, 1])
-    with h1:
-        nombre_proy = st.text_input(
-            "Proyecto / Ticket", placeholder="Ej: PSTC-1234 · Cliente ABC", key="nombre_proy"
-        )
-    with h2:
-        integ_proy = st.selectbox("Integración", ["Full ASP", "Mixto", "On Premise", "Estandar"], key="integ_proy")
-    with h3:
-        cx_extra = st.select_slider("Complejidad", options=["baja", "media", "alta"], value="media", key="cx_proy")
-    with h4:
-        metodo_proy = st.selectbox("Método IA", ["faiss+xgb+catalog", "faiss+catalog", "faiss", "catalog"], key="met_proy")
+    nombre_proy = st.text_input(
+        "Proyecto / Ticket", placeholder="Ej: PSTC-1234 · Cliente ABC", key="nombre_proy"
+    )
 
     st.divider()
 
@@ -360,6 +352,15 @@ with tab_proy:
     with col_sel:
         st.subheader("📦 Componentes del Proyecto")
         st.caption("Busca por nombre, tecnología o normativa. Puedes combinar libremente.")
+
+        # Controles de configuración compactos
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            integ_proy = st.selectbox("Integración", ["Full ASP", "Mixto", "On Premise", "Estandar"], key="integ_proy")
+        with c2:
+            cx_extra = st.select_slider("Complejidad", options=["baja", "media", "alta"], value="media", key="cx_proy")
+        with c3:
+            metodo_proy = st.selectbox("Método IA", ["faiss+xgb+catalog", "faiss+catalog", "faiss", "catalog"], key="met_proy")
 
         if df_roles.empty:
             st.warning("No se encontró catalogo_roles.csv en data/")
@@ -478,8 +479,6 @@ with tab_proy:
                     "TC (h)":          float(row["tc"]),
                     "SC (h)":          float(row["sc"]),
                     "PM (h)":          float(row["pm"]),
-                    "Total (h)":       float(row["total"]),
-                    "Horas ajustadas": float(row["total"]),
                     "Referencia IA":   "—",
                 })
 
@@ -510,8 +509,6 @@ with tab_proy:
                                     "TC (h)":          ajuste_manual["tc"],
                                     "SC (h)":          ajuste_manual["sc"],
                                     "PM (h)":          ajuste_manual["pm"],
-                                    "Total (h)":       ajuste_manual["total"],
-                                    "Horas ajustadas": ajuste_manual["total"],
                                     "Referencia IA":   f"Ajuste directo {ajuste_manual['rol']}",
                                 })
                                 continue
@@ -539,8 +536,6 @@ with tab_proy:
                                 "TC (h)":          tc_h,
                                 "SC (h)":          sc_h,
                                 "PM (h)":          pm_h,
-                                "Total (h)":       float(horas_ia),
-                                "Horas ajustadas": float(horas_ia),
                                 "Referencia IA":   ref,
                             })
                 except Exception as e:
@@ -570,72 +565,50 @@ with tab_proy:
         edited = st.data_editor(
             df_res,
             column_config={
-                "Horas ajustadas": st.column_config.NumberColumn(
-                    "Horas ajustadas ✏️",
-                    min_value=0,
-                    max_value=5000,
-                    step=0.5,
-                    help="Edita para ajustar la estimación de cada ítem",
+                "TC (h)": st.column_config.NumberColumn(
+                    "👷 TC (h) ✏️", min_value=0, max_value=2000, step=0.5,
+                    help="Editable: ajusta horas de TC directamente",
                 ),
-                "Origen":          st.column_config.TextColumn("Origen",     width="small"),
-                "Referencia IA":   st.column_config.TextColumn("Ref. IA",    width="medium"),
-                "Integración":     st.column_config.TextColumn("Integración",width="small"),
+                "SC (h)": st.column_config.NumberColumn(
+                    "💼 SC (h) ✏️", min_value=0, max_value=2000, step=0.5,
+                    help="Editable: ajusta horas de SC directamente",
+                ),
+                "PM (h)": st.column_config.NumberColumn(
+                    "📋 PM (h) ✏️", min_value=0, max_value=2000, step=0.5,
+                    help="Editable: ajusta horas de PM directamente",
+                ),
+                "Origen":        st.column_config.TextColumn("Origen",      width="small"),
+                "Referencia IA": st.column_config.TextColumn("Ref. IA",     width="medium"),
+                "Integración":   st.column_config.TextColumn("Integración", width="small"),
             },
-            disabled=[
-                "Origen", "Paquete / Tarea", "Integración",
-                "TC (h)", "SC (h)", "PM (h)", "Total (h)", "Referencia IA",
-            ],
+            disabled=["Origen", "Paquete / Tarea", "Integración", "Referencia IA"],
             hide_index=True,
             use_container_width=True,
         )
 
-        # ── Totales brutos
-        total_tc       = df_res["TC (h)"].sum()
-        total_sc       = df_res["SC (h)"].sum()
-        total_pm       = df_res["PM (h)"].sum()
-        total_catalogo = df_res["Total (h)"].sum()
-        total_manual   = edited["Horas ajustadas"].sum()
+        # ── Totales desde tabla editada
+        total_tc    = edited["TC (h)"].sum()
+        total_sc    = edited["SC (h)"].sum()
+        total_pm    = edited["PM (h)"].sum()
+        total_bruto = total_tc + total_sc + total_pm
 
-        # ── Ajuste inteligente (overhead PM compartido)
-        ajuste = _ajuste_proyecto(filas)
+        # ── Ajuste inteligente (overhead PM compartido) sobre valores editados
+        ajuste = _ajuste_proyecto(edited.to_dict("records"))
 
         st.markdown("---")
         st.subheader("⏱️ Totales por Rol")
 
-        col_raw, col_adj = st.columns(2)
-        with col_raw:
-            st.caption("**Suma directa (sin ajuste)**")
-            r1, r2, r3, r4 = st.columns(4)
-            r1.metric("👷 TC", f"{total_tc:.1f}h")
-            r2.metric("💼 SC", f"{total_sc:.1f}h")
-            r3.metric("📋 PM", f"{total_pm:.1f}h")
-            r4.metric("🔢 Total", f"{total_catalogo:.1f}h")
+        df_totales = pd.DataFrame({
+            "":          ["Suma directa", "Ajustado (PM compartido)"],
+            "👷 TC":     [round(total_tc, 1),        round(ajuste["tc"], 1)],
+            "💼 SC":     [round(total_sc, 1),        round(ajuste["sc"], 1)],
+            "📋 PM":     [round(total_pm, 1),        round(ajuste["pm"], 1)],
+            "🔢 Total":  [round(total_bruto, 1),     round(ajuste["total_ajustado"], 1)],
+        })
+        st.dataframe(df_totales, hide_index=True, use_container_width=True)
 
-        with col_adj:
-            st.caption("**Estimación ajustada (overhead compartido)**")
-            a1, a2, a3, a4 = st.columns(4)
-            a1.metric("👷 TC", f"{ajuste['tc']:.1f}h")
-            a2.metric("💼 SC", f"{ajuste['sc']:.1f}h")
-            a3.metric("📋 PM", f"{ajuste['pm']:.1f}h",
-                      delta=f"-{ajuste['ahorro_pm']:.1f}h" if ajuste["ahorro_pm"] > 0 else None,
-                      delta_color="inverse")
-            a4.metric("🔢 Total", f"{ajuste['total_ajustado']:.1f}h",
-                      delta=f"-{ajuste['total_raw'] - ajuste['total_ajustado']:.1f}h" if ajuste["ahorro_pm"] > 0 else None,
-                      delta_color="inverse")
-
-        if ajuste["nota"]:
-            st.info(f"💡 {ajuste['nota']}")
-
-        if total_manual != total_catalogo:
-            st.caption(f"✏️ Total con tus ajustes manuales: **{total_manual:.1f}h**")
-
-        # Gráfico comparativo
-        df_chart = pd.DataFrame({
-            "Rol":      ["TC", "SC", "PM"],
-            "Suma directa":  [total_tc,       total_sc,       total_pm],
-            "Ajustado":      [ajuste["tc"],   ajuste["sc"],   ajuste["pm"]],
-        }).set_index("Rol")
-        st.bar_chart(df_chart)
+        if ajuste["ahorro_pm"] > 0:
+            st.caption(f"💡 {ajuste['nota']} — ahorro: **{ajuste['ahorro_pm']:.1f}h PM**")
 
         # ── Análisis Gemini
         st.divider()
@@ -656,17 +629,18 @@ with tab_proy:
                 f"Integración: {rd['integracion']}",
                 "",
             ]
-            for f in filas:
-                if f["Origen"] == "📦 Catálogo":
-                    lines.append(
-                        f"• {f['Paquete / Tarea']}: "
-                        f"TC={f['TC (h)']}h | SC={f['SC (h)']}h | PM={f['PM (h)']}h | Total={f['Total (h)']}h"
-                    )
-                else:
-                    lines.append(f"• {f['Paquete / Tarea']}: ~{f['Total (h)']}h (estimado IA)")
+            for row_ed in edited.to_dict("records"):
+                tc_e = row_ed["TC (h)"]
+                sc_e = row_ed["SC (h)"]
+                pm_e = row_ed["PM (h)"]
+                tot_e = tc_e + sc_e + pm_e
+                lines.append(
+                    f"• {row_ed['Paquete / Tarea']}: "
+                    f"TC={tc_e:.1f}h | SC={sc_e:.1f}h | PM={pm_e:.1f}h | Total={tot_e:.1f}h"
+                )
             lines += [
                 "",
-                f"SUMA DIRECTA   → TC:{total_tc:.1f}h | SC:{total_sc:.1f}h | PM:{total_pm:.1f}h | Total:{total_catalogo:.1f}h",
+                f"SUMA DIRECTA   → TC:{total_tc:.1f}h | SC:{total_sc:.1f}h | PM:{total_pm:.1f}h | Total:{total_bruto:.1f}h",
                 f"AJUSTADO       → TC:{ajuste['tc']:.1f}h | SC:{ajuste['sc']:.1f}h | PM:{ajuste['pm']:.1f}h | Total:{ajuste['total_ajustado']:.1f}h",
             ]
             st.code("\n".join(lines), language=None)
@@ -685,9 +659,9 @@ with tab_proy:
                     "timestamp":       time.strftime("%Y-%m-%d %H:%M:%S"),
                     "tipo":            "implementacion",
                     "texto":           rd["nombre"],
-                    "horas_estimadas": float(total_ajustado),
+                    "horas_estimadas": float(ajuste["total_ajustado"]),
                     "horas_reales":    float(hr_real_p),
-                    "diferencia":      round(float(hr_real_p) - total_ajustado, 2),
+                    "diferencia":      round(float(hr_real_p) - ajuste["total_ajustado"], 2),
                     "top_ticket":      "",
                     "top_sim":         0,
                     "metodo":          "catalogo_proyecto",
