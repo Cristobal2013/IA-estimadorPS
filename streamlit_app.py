@@ -527,12 +527,10 @@ with tab_proy:
                             if top1:
                                 ref += f" · Ref:{top1['ticket']}({top1['sim']:.2f})"
 
-                            tc_r, sc_r, pm_r, matched = _get_role_ratios(tarea, df_roles, integ_proy)
-                            tc_h = round(horas_ia * tc_r, 1)
-                            sc_h = round(horas_ia * sc_r, 1)
-                            pm_h = round(horas_ia * pm_r, 1)
-                            if matched:
-                                ref += f" · Roles≈{matched}"
+                            # Distribución fija: la dificultad va a TC
+                            tc_h = round(horas_ia * 0.75, 1)
+                            sc_h = round(horas_ia * 0.20, 1)
+                            pm_h = round(horas_ia * 0.05, 1)
 
                             filas_res.append({
                                 "Origen":          f"🤖 IA ({tipo_t[:4]})",
