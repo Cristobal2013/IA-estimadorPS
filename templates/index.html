@@ -132,7 +132,11 @@
           html += "<table class=\"tbl\"><thead><tr><th>#</th><th>Ticket / Tipo</th><th>Horas</th><th>Similitud</th><th>Descripción</th></tr></thead>";
           html += "<tbody>" + renderRows(data.top) + "</tbody></table>";
         }
-        html += "<div class=\"actions-row\"><button id=\"btn-accept\">Guardar esta estimación</button></div>";
+        html += "<div class=\"actions-row\">";
+        html += "<button id=\"btn-accept\">Guardar esta estimación</button>";
+        html += "<button id=\"btn-razonar\" style=\"margin-left:10px;background:#4285f4;\">🤖 Analizar con IA</button>";
+        html += "</div>";
+        html += "<div id=\"ai-box\"></div>";
         resBox.innerHTML = html;
         resBox.style.display = "block";
 
@@ -161,6 +165,41 @@
               else { alert("⚠️ Could not save."); }
             }catch(e){
               alert("Error while saving: " + (e && e.message ? e.message : e));
+            }
+          });
+        }
+
+        const btnRazonar = document.getElementById("btn-razonar");
+        if(btnRazonar){
+          btnRazonar.addEventListener("click", async function(){
+            const aiBox = document.getElementById("ai-box");
+            btnRazonar.disabled = true;
+            btnRazonar.textContent = "Analizando...";
+            aiBox.innerHTML = "<p style=\"color:#666;margin-top:12px;\">Consultando Gemini AI...</p>";
+            try{
+              const payload3 = {
+                tipo: $("#tipo").value,
+                texto: $("#texto").value.trim(),
+                horas: lastResult ? (lastResult.horas || 0) : 0,
+                top: lastResult ? (lastResult.top || []) : []
+              };
+              const r3 = await fetch("/api/razonar", {
+                method:"POST",
+                headers: {"Content-Type":"application/json"},
+                body: JSON.stringify(payload3)
+              });
+              const j3 = await r3.json().catch(()=>({ok:false}));
+              if(j3.ok){
+                const md = (j3.razonamiento || "").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\n/g, "<br>");
+                aiBox.innerHTML = "<div style=\"margin-top:16px;padding:14px;background:#f0f7ff;border-left:4px solid #4285f4;border-radius:4px;\"><h4 style=\"margin:0 0 10px;color:#1a73e8;\">Análisis Gemini AI</h4><div style=\"line-height:1.7;\">" + md + "</div></div>";
+              } else {
+                aiBox.innerHTML = "<p style=\"color:#c00;margin-top:12px;\">⚠️ " + (j3.error || "Error al consultar IA") + "</p>";
+              }
+            }catch(e){
+              aiBox.innerHTML = "<p style=\"color:#c00;margin-top:12px;\">⚠️ Error: " + (e && e.message ? e.message : e) + "</p>";
+            }finally{
+              btnRazonar.disabled = false;
+              btnRazonar.textContent = "🤖 Analizar con IA";
             }
           });
         }

@@ -1,4 +1,4 @@
-import os, re, json
+import os, re, json, hashlib
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
 
@@ -95,9 +95,36 @@ def _embed_texts(texts: List[str]) -> np.ndarray:
     return np.asarray(embs, dtype="float32")
 
 # ---------- FAISS helpers ----------
-def _index_path(tag: str) -> Path: return INDEX_DIR / f"faiss_{tag}.index"
-def _hours_path(tag: str) -> Path: return INDEX_DIR / f"faiss_{tag}_hours.json"
+def _index_path(tag: str)   -> Path: return INDEX_DIR / f"faiss_{tag}.index"
+def _hours_path(tag: str)   -> Path: return INDEX_DIR / f"faiss_{tag}_hours.json"
 def _dataset_path(tag: str) -> Path: return INDEX_DIR / f"faiss_{tag}_dataset.csv"
+def _emb_npy_path(tag: str) -> Path: return INDEX_DIR / f"embs_{tag}.npy"
+def _emb_hash_path(tag: str)-> Path: return INDEX_DIR / f"embs_{tag}.hash"
+
+# ---------- Caché de embeddings ----------
+def _texts_hash(texts: List[str]) -> str:
+    h = hashlib.md5()
+    for t in texts:
+        h.update(t.encode("utf-8", errors="replace"))
+    return h.hexdigest()
+
+def _load_emb_cache(tag: str, current_hash: str) -> Optional[np.ndarray]:
+    hp, ep = _emb_hash_path(tag), _emb_npy_path(tag)
+    if not (hp.exists() and ep.exists()):
+        return None
+    try:
+        if hp.read_text().strip() == current_hash:
+            return np.load(str(ep))
+    except Exception:
+        pass
+    return None
+
+def _save_emb_cache(tag: str, embs: np.ndarray, texts_hash: str):
+    try:
+        np.save(str(_emb_npy_path(tag)), embs)
+        _emb_hash_path(tag).write_text(texts_hash)
+    except Exception:
+        pass
 
 def _save_index(index, tag: str, hours: List[float]):
     faiss.write_index(index, str(_index_path(tag)))
@@ -304,10 +331,13 @@ def load_labeled_dataframe(tag: str) -> pd.DataFrame:
             dfn = dfn[mask]
         if not dfn.empty:
             tcol = "texto" if "texto" in dfn.columns else (_guess_col(dfn, _TEXT_HINTS) or dfn.columns[0])
-            if "estimacion_final" in dfn.columns:
-                hcol = "estimacion_final"
-            elif "horas_reales" in dfn.columns:
+            # Prioriza horas reales (feedback real) sobre la estimación aceptada
+            if "horas_reales" in dfn.columns:
                 hcol = "horas_reales"
+            elif "estimacion_final" in dfn.columns:
+                hcol = "estimacion_final"
+            elif "horas_estimadas" in dfn.columns:
+                hcol = "horas_estimadas"
             else:
                 hcol = _guess_col(dfn, _HOURS_HINTS)
             frames.append(_make_rows(dfn, tcol, hcol, None, source="new"))
@@ -329,15 +359,28 @@ class EmbeddingsFaissEstimator:
         self.index = None
         self.hours = None
 
+    def fit_from_embs(self, embs: np.ndarray, hours: List[float]):
+        if embs.size == 0:
+            raise ValueError("Corpus vacío")
+        idx = faiss.IndexFlatIP(embs.shape[1])
+        idx.add(embs)
+        self.index = idx
+        self.hours = list(map(float, hours))
+
     def fit(self, texts: List[str], hours: List[float]):
         embs = _embed_texts(texts)
         if embs.size == 0:
             raise ValueError("Corpus vacío")
-        dim = embs.shape[1]
-        idx = faiss.IndexFlatIP(dim)  # cosine gracias a normalize_embeddings=True
-        idx.add(embs)
-        self.index = idx
-        self.hours = list(map(float, hours))
+        self.fit_from_embs(embs, hours)
+
+    def add_one(self, text: str, hours: float):
+        """Agrega un registro al índice sin reconstruir todo."""
+        if self.index is None or self.hours is None:
+            raise RuntimeError("Índice no cargado")
+        emb = _embed_texts([text])
+        self.index.add(emb)
+        self.hours.append(float(hours))
+        self.save()
 
     def save(self):
         if self.index is None or self.hours is None:
@@ -389,12 +432,23 @@ class EmbeddingsFaissEstimator:
 # ---------- Orquestación de entrenamiento ----------
 def _build_from_frame(tag: str, df: pd.DataFrame) -> int:
     if df.empty:
-        # guarda dataset vacío para trazabilidad
         pd.DataFrame(columns=["text","hours","ticket","source"]).to_csv(_dataset_path(tag), index=False, encoding="utf-8")
         return 0
-    est = EmbeddingsFaissEstimator(tag)
+    texts = df["text"].astype(str).tolist()
     hours = [float(h) if h is not None and not pd.isna(h) else 0.0 for h in df["hours"].tolist()]
-    est.fit(df["text"].astype(str).tolist(), hours)
+
+    # Intenta cargar embeddings desde caché (evita recalcular si los datos no cambiaron)
+    h = _texts_hash(texts)
+    embs = _load_emb_cache(tag, h)
+    if embs is None:
+        print(f"[INFO] Calculando embeddings para {len(texts)} textos ({tag})...")
+        embs = _embed_texts(texts)
+        _save_emb_cache(tag, embs, h)
+    else:
+        print(f"[INFO] Embeddings cargados desde caché ({tag}), sin recalcular.")
+
+    est = EmbeddingsFaissEstimator(tag)
+    est.fit_from_embs(embs, hours)
     est.save()
     df[["text","hours","ticket","source"]].to_csv(_dataset_path(tag), index=False, encoding="utf-8")
     return len(df)

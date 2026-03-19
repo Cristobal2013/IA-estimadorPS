@@ -12,7 +12,7 @@ DEBUG_FLAG = os.environ.get("DEBUG", "0") == "1"
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(Path(__file__).parent / "data")))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 NEW_EST_CSV = DATA_DIR / "estimaciones_nuevas.csv"
-FULL_FIELDS = ["timestamp","tipo","texto","horas","top_ticket","top_sim","metodo","autor","comentarios"]
+FULL_FIELDS = ["timestamp","tipo","texto","horas_estimadas","horas_reales","diferencia","top_ticket","top_sim","metodo","autor","comentarios"]
 
 def _existing_fields(path: Path):
     if not path.exists() or path.stat().st_size == 0:
@@ -279,19 +279,83 @@ def api_estimate():
     print(f"[INFO] tipo={tipo}, complejidad={complexity}, α={alpha_eff:.2f}, horas={resp['horas']}")
     return jsonify(_clean_json(resp))
 
+@app.post("/api/razonar")
+def api_razonar():
+    data = request.get_json(force=True, silent=True) or {}
+    texto = (data.get("texto") or "").strip()
+    tipo  = (data.get("tipo") or "desarrollo").strip().lower()
+    horas = _to_float(data.get("horas") or 0)
+    top   = data.get("top") or []
+
+    if not texto:
+        return jsonify({"ok": False, "error": "texto vacío"}), 400
+
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        return jsonify({"ok": False, "error": "GEMINI_API_KEY no configurada en variables de entorno"}), 503
+
+    tipo_nombre = "CESQ (Desarrollo)" if "des" in tipo else "PSTC (Implementación)"
+
+    similares_txt = ""
+    for i, t in enumerate(top[:3], 1):
+        similares_txt += (
+            f"\n{i}. Ticket {t.get('ticket','?')} ({t.get('tipo','?')}) — "
+            f"{t.get('hours', 0):.0f}h — Similitud: {t.get('sim', 0):.3f}\n"
+            f"   Descripción: {str(t.get('text',''))[:250]}"
+        )
+
+    prompt = f"""Eres un experto en estimación de esfuerzo para tickets Jira en proyectos de software fiscal y tributario (Sovos).
+
+TICKET A ESTIMAR ({tipo_nombre}):
+{texto}
+
+ESTIMACIÓN INICIAL DEL SISTEMA: {horas:.0f}h
+
+TICKETS HISTÓRICOS MÁS SIMILARES ENCONTRADOS:{similares_txt}
+
+Analiza y responde en formato estructurado con estas 4 secciones:
+
+**1. Comparabilidad con históricos**
+¿Los tickets similares son realmente comparables? ¿Qué tienen en común y qué difiere?
+
+**2. Riesgos y complejidades adicionales**
+¿Qué factores podría haber pasado por alto el sistema? (integraciones, país, normativa, dependencias)
+
+**3. Rango de estimación recomendado**
+Mínimo — Máximo horas, con justificación breve.
+
+**4. Confianza**
+Alta / Media / Baja — una oración explicando por qué.
+
+Responde en español. Sé directo y práctico, sin introducción."""
+
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.0-flash")
+        response = model.generate_content(prompt)
+        return jsonify({"ok": True, "razonamiento": response.text})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error Gemini: {e}"}), 500
+
+
 @app.post("/api/accept")
 def api_accept():
     data = request.get_json(force=True, silent=True) or {}
+    horas_estimadas = _to_float(data.get("horas_estimadas") or data.get("horas") or 0)
+    horas_reales    = _to_float(data.get("horas_reales") or 0)
     row = {
-        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "tipo": _resolve_tag(data.get("tipo") or ""),
-        "texto": (data.get("texto") or "").strip(),
-        "horas": _to_float(data.get("horas") or 0),
-        "top_ticket": (data.get("top_ticket") or "").strip(),
-        "top_sim": _to_float(data.get("top_sim") or 0),
-        "metodo": (data.get("metodo") or "faiss+catalog").strip(),
-        "autor": (data.get("autor") or "web").strip(),
-        "comentarios": (data.get("comentarios") or "").strip(),
+        "timestamp":      time.strftime("%Y-%m-%d %H:%M:%S"),
+        "tipo":           _resolve_tag(data.get("tipo") or ""),
+        "texto":          (data.get("texto") or "").strip(),
+        "horas_estimadas": horas_estimadas,
+        "horas_reales":    horas_reales,
+        "diferencia":      round(horas_reales - horas_estimadas, 2),
+        "top_ticket":     (data.get("top_ticket") or "").strip(),
+        "top_sim":        _to_float(data.get("top_sim") or 0),
+        "metodo":         (data.get("metodo") or "faiss+catalog").strip(),
+        "autor":          (data.get("autor") or "web").strip(),
+        "comentarios":    (data.get("comentarios") or "").strip(),
     }
     append_row_safe(row)
     return jsonify({"ok": True})

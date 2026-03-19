@@ -1,20 +1,28 @@
+---
+title: IA Estimador PS
+emoji: 🤖
+colorFrom: blue
+colorTo: purple
+sdk: streamlit
+sdk_version: 1.41.0
+app_file: streamlit_app.py
+pinned: false
+---
 
-# IA Estimador (Catálogo + Históricos + Reentrenar + Upload)
+# IA Estimador PS
 
-## Variables de entorno
-- ENABLE_EMBEDDINGS=1
-- MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2 (opcional)
-- DATA_CSV=data/historicos.csv
-- EMB_PATH=data/embeddings.npz
-- TOP_K=5
+Estimador de esfuerzo (horas) para tickets Jira CESQ y PSTC usando IA semántica (FAISS + sentence-transformers) y análisis con Gemini AI.
 
-## Pasos en Render
-1) Build Command: `pip install -r requirements.txt`
-2) Start Command: `gunicorn -k gthread -w 1 --threads 1 -t 300 -b 0.0.0.0:$PORT app:app`
-3) Env Vars: `ENABLE_EMBEDDINGS=1`
-4) Sube tu CSV de históricos desde la UI (botón "Subir CSV") y luego pulsa "Reentrenar histórico".
+## Variables de entorno (configurar en HF Spaces → Settings → Variables)
 
-## Formato CSV
-id,tipo,descripcion,horas
-TCK-001,CESQ,Crear endpoint...,8
-...
+| Variable | Descripción |
+|---|---|
+| `GEMINI_API_KEY` | API key de Google AI Studio (gratis en aistudio.google.com) |
+
+## Datos
+
+Los archivos CSV históricos van en la carpeta `data/`:
+- `EstimacionCESQ.csv` — histórico tickets CESQ (Desarrollo)
+- `EstimacionesPSTC.csv` — histórico tickets PSTC (Implementación)
+- `catalogo_cesq.csv` — catálogo base CESQ
+- `catalogo_pstc.csv` — catálogo base PSTC

@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import time
+import math
 
 # --- IMPORTAMOS TU LÓGICA EXISTENTE ---
 # Esto reutiliza lo que ya programaste en app.py y estimator.py
@@ -142,34 +143,136 @@ if st.session_state.resultado:
     # --- SECCIÓN DE GUARDADO (FEEDBACK) ---
     st.divider()
     st.subheader("💾 Guardar Feedback")
-    st.caption("Ajusta las horas si es necesario y guarda. ¡Descarga el CSV antes de salir!")
+    st.caption("Ingresa las horas reales una vez terminado el ticket. Esto mejora el modelo con el tiempo.")
 
     with st.form("form_guardar"):
-        c1, c2 = st.columns(2)
+        c1, c2, c3 = st.columns(3)
         with c1:
-            horas_reales = st.number_input("Horas Corregidas (Reales)", value=float(res['horas']))
+            st.metric("Estimación IA", f"{math.ceil(res['horas'])} h")
         with c2:
-            comentarios = st.text_input("Comentarios / ID Ticket Nuevo")
-        
-        submitted = st.form_submit_button("Confirmar y Guardar")
-        
+            horas_reales = st.number_input("Horas reales que tomó", min_value=0.0, step=0.5,
+                                           help="¿Cuántas horas tomó realmente el ticket?")
+        with c3:
+            comentarios = st.text_input("Comentario / ID ticket")
+
+        submitted = st.form_submit_button("Confirmar y Guardar", type="primary")
+
         if submitted:
+            horas_estimadas = float(math.ceil(res['horas']))
             nueva_fila = {
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "tipo": res['tipo'],
-                "texto": res['texto'],
-                "horas": horas_reales,
-                "top_ticket": res['top'][0]['ticket'] if res['top'] else "",
-                "top_sim": res['top'][0]['sim'] if res['top'] else 0,
-                "metodo": res['metodo'],
-                "autor": "streamlit_ui",
-                "comentarios": comentarios
+                "timestamp":       time.strftime("%Y-%m-%d %H:%M:%S"),
+                "tipo":            res['tipo'],
+                "texto":           res['texto'],
+                "horas_estimadas": horas_estimadas,
+                "horas_reales":    float(horas_reales),
+                "diferencia":      round(float(horas_reales) - horas_estimadas, 2),
+                "top_ticket":      res['top'][0]['ticket'] if res['top'] else "",
+                "top_sim":         res['top'][0]['sim'] if res['top'] else 0,
+                "metodo":          res['metodo'],
+                "autor":           "streamlit_ui",
+                "comentarios":     comentarios,
             }
             try:
                 append_row_safe(nueva_fila)
-                st.success("✅ Guardado en memoria temporal.")
+
+                # Actualiza el índice FAISS de forma incremental (sin reconstruir todo)
+                if horas_reales > 0:
+                    try:
+                        backend = _lazy_backend()
+                        if backend["ok"]:
+                            Emb = backend["EmbeddingsFaissEstimator"]
+                            est = Emb(res['tipo'])
+                            if est.load():
+                                # Usa horas_reales si hay, si no usa estimadas
+                                est.add_one(res['texto'], float(horas_reales))
+                                st.success(f"✅ Guardado e índice actualizado con {horas_reales}h reales.")
+                            else:
+                                st.success("✅ Guardado. Índice se actualizará en el próximo reentrenamiento.")
+                        else:
+                            st.success("✅ Guardado.")
+                    except Exception as e_idx:
+                        st.success(f"✅ Guardado. (Índice no actualizado: {e_idx})")
+                else:
+                    st.success("✅ Guardado. Ingresa horas reales para mejorar el modelo.")
             except Exception as e:
                 st.error(f"Error guardando: {e}")
+
+# --- ANÁLISIS CON GEMINI AI ---
+if st.session_state.resultado:
+    res = st.session_state.resultado
+    st.divider()
+    if st.button("🤖 Analizar con Gemini AI", use_container_width=True):
+        api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        if not api_key:
+            st.warning("⚠️ Configura la variable de entorno `GEMINI_API_KEY` en HF Spaces → Settings → Variables.")
+        else:
+            tipo_nombre = "CESQ (Desarrollo)" if "des" in res["tipo"] else "PSTC (Implementación)"
+            similares_txt = ""
+            for i, t in enumerate(res["top"][:3], 1):
+                similares_txt += (
+                    f"\n{i}. Ticket {t.get('ticket','?')} — "
+                    f"{t.get('hours', 0):.0f}h — Similitud: {t.get('sim', 0):.3f}\n"
+                    f"   Descripción: {str(t.get('text',''))[:250]}"
+                )
+            prompt = f"""Eres un experto en estimación de esfuerzo para tickets Jira en proyectos de software fiscal y tributario (Sovos).
+
+TICKET A ESTIMAR ({tipo_nombre}):
+{res['texto']}
+
+ESTIMACIÓN INICIAL DEL SISTEMA: {math.ceil(res['horas']):.0f}h
+
+TICKETS HISTÓRICOS MÁS SIMILARES ENCONTRADOS:{similares_txt}
+
+Analiza y responde con estas 4 secciones:
+
+**1. Comparabilidad con históricos**
+¿Los tickets similares son realmente comparables? ¿Qué tienen en común y qué difiere?
+
+**2. Riesgos y complejidades adicionales**
+¿Qué factores podría haber pasado por alto el sistema? (integraciones, país, normativa, dependencias)
+
+**3. Rango de estimación recomendado**
+Mínimo — Máximo horas, con justificación breve.
+
+**4. Confianza**
+Alta / Media / Baja — una oración explicando por qué.
+
+Responde en español. Sé directo y práctico."""
+            with st.spinner("Consultando Gemini AI..."):
+                try:
+                    import google.generativeai as genai
+                    genai.configure(api_key=api_key)
+                    model = genai.GenerativeModel("gemini-2.0-flash")
+                    response = model.generate_content(prompt)
+                    st.info(response.text)
+                except Exception as e:
+                    st.error(f"Error al consultar Gemini: {e}")
+
+# --- MÉTRICAS DE PRECISIÓN DEL MODELO ---
+csv_path = "data/estimaciones_nuevas.csv"
+if os.path.exists(csv_path):
+    try:
+        df_fb = pd.read_csv(csv_path)
+        if "horas_reales" in df_fb.columns and "horas_estimadas" in df_fb.columns:
+            df_valid = df_fb[(df_fb["horas_reales"] > 0) & (df_fb["horas_estimadas"] > 0)].copy()
+            if len(df_valid) >= 3:
+                st.divider()
+                st.subheader("📊 Precisión del Modelo")
+                df_valid["error_abs"] = (df_valid["horas_reales"] - df_valid["horas_estimadas"]).abs()
+                df_valid["error_pct"] = df_valid["error_abs"] / df_valid["horas_reales"] * 100
+                mae  = df_valid["error_abs"].mean()
+                mape = df_valid["error_pct"].mean()
+                bias = (df_valid["horas_estimadas"] - df_valid["horas_reales"]).mean()
+                n    = len(df_valid)
+                a1, a2, a3, a4 = st.columns(4)
+                a1.metric("Registros con feedback", n)
+                a2.metric("Error promedio (MAE)", f"{mae:.1f} h")
+                a3.metric("Error % promedio", f"{mape:.0f}%")
+                tendencia = f"+{bias:.1f}h (sobreestima)" if bias > 0.5 else (f"{bias:.1f}h (subestima)" if bias < -0.5 else "Calibrado ✓")
+                a4.metric("Tendencia", tendencia)
+                st.caption(f"Basado en {n} confirmaciones con horas reales ingresadas.")
+    except Exception:
+        pass
 
 # --- DESCARGA DE DATOS (IMPORTANTE PARA PERSISTENCIA) ---
 st.divider()
