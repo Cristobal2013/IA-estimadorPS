@@ -29,13 +29,13 @@ Invoiceware,Desarrollos SAP agregar nuevo DTE,Full ASP,5.0,6.0,4.0,15.0
 Acepta,Emision y Recepcion Portal (Basic),Estandar,20.0,12.0,8.0,40.0
 Acepta,Emision x Integracion Recepcion Estandar,Estandar,55.0,35.0,20.0,110.0
 Acepta,Emision Full Integracion Emision y Recepcion,Estandar,110.0,70.0,40.0,220.0
-RES154 PPL,Filtro Full 1-2 Ruts,Mixto,30.0,15.0,10.0,55.0
-RES154 PPL,Filtro Personalizado 1-2 Ruts,Mixto,45.0,25.0,17.5,87.5
-RES154 PPL,Filtro Full + PDF 1-2 Ruts,Full ASP,17.0,13.0,7.5,37.5
-RES154 PPL,Filtro Personalizado 1-2 Ruts,Full ASP,40.0,20.0,15.0,75.0
-RES154 PPL,Addon 3-5 Ruts adicionales,Estandar,8.0,3.0,2.0,13.0
-RES154 PPL,Addon 6-10 Ruts adicionales,Estandar,16.0,5.0,5.0,26.0
-RES154 PPL,Addon 10+ Ruts adicionales,Estandar,28.0,8.0,8.0,44.0
+RES154 PPL,Caso Mixto Filtro Full 1-2 Ruts,Estandar,30.0,15.0,10.0,55.0
+RES154 PPL,Caso Mixto Filtro Personalizado 1-2 Ruts,Estandar,45.0,25.0,17.5,87.5
+RES154 PPL,Caso ASP Filtro Full+PDF 1-2 Ruts,Estandar,17.0,13.0,7.5,37.5
+RES154 PPL,Caso ASP Filtro Personalizado 1-2 Ruts,Estandar,40.0,20.0,15.0,75.0
+RES154 PPL,Addon TC 3-5 Ruts (Diseno+GoLive+Filtro),Estandar,13.0,0.0,0.0,13.0
+RES154 PPL,Addon TC 6-10 Ruts (Diseno+GoLive+Filtro),Estandar,26.0,0.0,0.0,26.0
+RES154 PPL,Addon TC 10+ Ruts (Diseno+GoLive+Filtro),Estandar,44.0,0.0,0.0,44.0
 RES154 Acepta,Integracion Estandar http-spool,Estandar,12.0,8.0,0.0,20.0
 RES154 Acepta,Integracion Personalizada http-spool-soap,Estandar,25.0,15.0,0.0,40.0
 RES154 Acepta,Integracion Personalizada tipo bash,Estandar,30.0,12.0,3.0,45.0
