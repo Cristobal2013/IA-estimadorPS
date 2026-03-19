@@ -106,10 +106,18 @@ def _estimar_texto(texto, tag, metodo, complexity, backend):
     }
 
 
+# --- CARGA CATÁLOGO DE ROLES ---
+@st.cache_data
+def _load_roles():
+    p = os.path.join(os.path.dirname(__file__), "data", "catalogo_roles.csv")
+    if not os.path.exists(p):
+        return pd.DataFrame()
+    return pd.read_csv(p)
+
 # --- TÍTULO ---
 st.title("🤖 Estimador de Esfuerzo (IA)")
 
-tab_libre, tab_desglose = st.tabs(["📝 Texto Libre", "📋 Desglose por Tareas"])
+tab_libre, tab_desglose, tab_roles = st.tabs(["📝 Texto Libre", "📋 Desglose por Tareas", "👥 Calculadora por Roles"])
 
 
 # ══════════════════════════════════════════════════
@@ -290,6 +298,92 @@ with tab_desglose:
                     st.success("✅ Guardado correctamente.")
                 except Exception as e:
                     st.error(f"Error guardando: {e}")
+
+
+# ══════════════════════════════════════════════════
+# TAB 3 — CALCULADORA POR ROLES (TC / SC / PM)
+# ══════════════════════════════════════════════════
+with tab_roles:
+    st.markdown("Selecciona los paquetes del proyecto y obtén las horas por rol **(TC / SC / PM)**.")
+
+    df_roles = _load_roles()
+    if df_roles.empty:
+        st.warning("No se encontró catalogo_roles.csv en la carpeta data/")
+    else:
+        paquetes_disponibles = sorted(df_roles["paquete"].unique())
+        integraciones_disponibles = sorted(df_roles["integracion"].unique())
+
+        col_r1, col_r2 = st.columns([2, 1])
+        with col_r1:
+            paquetes_sel = st.multiselect(
+                "Paquetes del proyecto",
+                options=paquetes_disponibles,
+                placeholder="Ej: Reclamaciones, Plantillas, Implem_Standard PPL..."
+            )
+        with col_r2:
+            integ_sel = st.selectbox(
+                "Tipo de integración",
+                options=["Full ASP", "Mixto", "On Premise", "Estandar"],
+                index=0
+            )
+
+        if paquetes_sel:
+            st.markdown("---")
+            filas_roles = []
+            for paq in paquetes_sel:
+                subset = df_roles[df_roles["paquete"] == paq]
+                # Intentar con la integración seleccionada, si no existe usar Estandar
+                match = subset[subset["integracion"] == integ_sel]
+                if match.empty:
+                    match = subset[subset["integracion"] == "Estandar"]
+                if match.empty:
+                    match = subset  # cualquier integración disponible
+
+                for _, row in match.iterrows():
+                    filas_roles.append({
+                        "Paquete":    row["paquete"],
+                        "Escenario":  row["escenario"],
+                        "Integración": row["integracion"],
+                        "TC (h)":     row["tc"],
+                        "SC (h)":     row["sc"],
+                        "PM (h)":     row["pm"],
+                        "Total (h)":  row["total"],
+                    })
+
+            if filas_roles:
+                df_tabla_roles = pd.DataFrame(filas_roles)
+                st.subheader("📊 Desglose por Paquete y Rol")
+                st.dataframe(df_tabla_roles, use_container_width=True, hide_index=True)
+
+                # Totales
+                total_tc  = df_tabla_roles["TC (h)"].sum()
+                total_sc  = df_tabla_roles["SC (h)"].sum()
+                total_pm  = df_tabla_roles["PM (h)"].sum()
+                total_all = df_tabla_roles["Total (h)"].sum()
+
+                st.markdown("---")
+                st.subheader("⏱️ Totales del Proyecto")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("👷 TC", f"{total_tc:.1f}h")
+                c2.metric("💼 SC", f"{total_sc:.1f}h")
+                c3.metric("📋 PM", f"{total_pm:.1f}h")
+                c4.metric("🔢 Total", f"{total_all:.1f}h")
+
+                # Gráfico de barras por rol
+                df_bar = pd.DataFrame({
+                    "Rol": ["TC", "SC", "PM"],
+                    "Horas": [total_tc, total_sc, total_pm]
+                })
+                st.bar_chart(df_bar.set_index("Rol"))
+
+                # Exportar como texto para copiar
+                with st.expander("📋 Copiar resumen"):
+                    resumen = f"Proyecto: {', '.join(paquetes_sel)}\n"
+                    resumen += f"Integración: {integ_sel}\n\n"
+                    for _, r in df_tabla_roles.iterrows():
+                        resumen += f"• {r['Paquete']} - {r['Escenario']}: TC={r['TC (h)']}h | SC={r['SC (h)']}h | PM={r['PM (h)']}h\n"
+                    resumen += f"\nTOTAL → TC: {total_tc:.1f}h | SC: {total_sc:.1f}h | PM: {total_pm:.1f}h | TOTAL: {total_all:.1f}h"
+                    st.code(resumen, language=None)
 
 
 # --- MOSTRAR RESULTADOS TAB LIBRE ---

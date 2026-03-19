@@ -1,0 +1,30 @@
+paquete,escenario,integracion,tc,sc,pm,total
+Plantillas,Creacion plantilla con base en otras,Full ASP,12.5,6.0,5.0,23.5
+Plantillas,Creacion plantilla con base en otras,Mixto,14.5,5.0,6.0,25.5
+Plantillas,Creacion plantilla con base en otras,On Premise,15.5,5.0,6.0,26.5
+Plantillas,Creacion plantilla desde cero,Full ASP,17.5,3.0,8.0,28.5
+Plantillas,Creacion plantilla desde cero,Mixto,19.5,4.0,8.0,31.5
+Plantillas,Creacion plantilla desde cero,On Premise,20.5,4.0,8.0,32.5
+Plantillas,Modificacion plantilla 1 campo o logo,Full ASP,7.5,4.0,7.0,18.5
+Plantillas,Modificacion plantilla 1 campo o logo,Mixto,9.0,4.0,7.0,20.0
+Plantillas,Modificacion plantilla 1 campo o logo,On Premise,10.0,4.0,7.0,21.0
+Reclamaciones,Reclamaciones eServer Sovos,Full ASP,7.0,3.5,3.0,13.5
+Reclamaciones,Reclamaciones eServer Sovos,Mixto,6.0,4.5,7.0,17.5
+Reclamaciones,Reclamaciones eServer Sovos,On Premise,6.0,4.5,0.0,10.5
+Cesiones,Cesiones eServer Sovos,Full ASP,8.0,3.5,4.0,15.5
+Cesiones,Cesiones eServer Sovos,Mixto,7.0,4.5,6.0,17.5
+Cesiones,Cesiones eServer Sovos,On Premise,7.0,4.5,0.0,11.5
+Printer,Printer por usuario,Estandar,3.0,4.0,3.5,10.5
+Implem_Standard PPL,PPL DTE Emision y Recepcion estandar,Estandar,20.0,5.0,4.0,29.0
+Implem_Standard PPL,PPL Boletas BO Emision y Recepcion estandar,Estandar,17.5,4.5,4.0,26.0
+Migracion a Nube Sovos,Sin migracion de datos,Estandar,18.0,6.0,5.0,29.0
+Coapi,Filtro Full,Estandar,40.0,40.0,30.0,110.0
+Coapi,Plantillas Standar,Estandar,50.0,40.0,30.0,120.0
+Coapi,Con Bloqueo emision DTE desde PPL y Habilitacion via Coapi,Estandar,62.0,50.0,38.0,150.0
+Coapi,Filtro Full con Plantillas,Estandar,60.0,60.0,30.0,150.0
+Implem_POS PPL_Resmax,Con Capacitacion,Estandar,42.0,12.0,4.0,58.0
+Implem_POS PPL_Resmax,Sin Capacitacion,Estandar,48.0,12.0,4.0,64.0
+Invoiceware,Implementacion RTC Estandar sin impresiones,Full ASP,22.0,3.0,4.0,29.0
+Invoiceware,Desarrollos SAP agregar nuevo DTE,Full ASP,5.0,6.0,4.0,15.0
+Acepta,Implementacion Acepta Basic,Estandar,15.0,5.0,4.0,24.0
+Acepta,Implementacion Acepta Full ASP,Estandar,20.0,5.0,4.0,29.0
