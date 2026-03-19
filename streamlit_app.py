@@ -181,7 +181,7 @@ def _get_role_ratios(texto: str, df_roles: pd.DataFrame, integ_pref: str):
 for _k, _v in {
     "resultado_libre": None,
     "resultado_proyecto": None,
-    "tareas_extra": [""],
+    "tareas_extra": [{"texto": "", "tipo": "Implementación"}],
 }.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -207,7 +207,7 @@ with tab_proy:
 
     # ── Encabezado del proyecto ──────────────────────
     st.subheader("1️⃣ Datos del Proyecto")
-    c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
+    c1, c2, c3 = st.columns([4, 1, 1])
     with c1:
         nombre_proy = st.text_input(
             "Nombre del proyecto / Ticket",
@@ -215,20 +215,19 @@ with tab_proy:
             key="nombre_proy",
         )
     with c2:
-        tipo_proy = st.selectbox("Tipo", ["Implementación", "Desarrollo"], key="tipo_proy")
-    with c3:
         integ_proy = st.selectbox(
-            "Integración",
+            "Integración base",
             ["Full ASP", "Mixto", "On Premise", "Estandar"],
             key="integ_proy",
         )
-    with c4:
+    with c3:
         cx_extra = st.select_slider(
-            "Complejidad tareas extra",
+            "Complejidad extra",
             options=["baja", "media", "alta"],
             value="media",
             key="cx_proy",
         )
+    st.caption("💡 Los paquetes del catálogo son siempre **Implementación**. Cada tarea adicional puede ser Desarrollo o Implementación.")
 
     st.divider()
 
@@ -288,15 +287,31 @@ with tab_proy:
 
         tareas_ed = []
         for i, t in enumerate(st.session_state.tareas_extra):
-            ct, cd = st.columns([5, 1])
+            # Soporte tanto dict nuevo como string legacy
+            if isinstance(t, dict):
+                t_texto = t.get("texto", "")
+                t_tipo  = t.get("tipo", "Implementación")
+            else:
+                t_texto = t
+                t_tipo  = "Implementación"
+
+            ct, ctipo, cd = st.columns([4, 2, 1])
             with ct:
                 val = st.text_input(
                     f"Tarea {i + 1}",
-                    value=t,
+                    value=t_texto,
                     key=f"textra_{i}",
-                    placeholder="Ej: Soporte post go-live, configuración especial...",
+                    placeholder="Ej: Soporte post go-live, dev especial...",
+                    label_visibility="collapsed",
                 )
-                tareas_ed.append(val)
+            with ctipo:
+                tipo_t = st.selectbox(
+                    "Tipo",
+                    ["Implementación", "Desarrollo"],
+                    index=0 if t_tipo == "Implementación" else 1,
+                    key=f"ttipo_{i}",
+                    label_visibility="collapsed",
+                )
             with cd:
                 st.markdown("<br>", unsafe_allow_html=True)
                 if (
@@ -305,10 +320,11 @@ with tab_proy:
                 ):
                     st.session_state.tareas_extra.pop(i)
                     st.rerun()
+            tareas_ed.append({"texto": val, "tipo": tipo_t})
         st.session_state.tareas_extra = tareas_ed
 
         if st.button("➕ Agregar tarea", key="add_extra"):
-            st.session_state.tareas_extra.append("")
+            st.session_state.tareas_extra.append({"texto": "", "tipo": "Implementación"})
             st.rerun()
 
         st.markdown("---")
@@ -347,7 +363,11 @@ with tab_proy:
             })
 
         # 2) Tareas adicionales → IA
-        tareas_validas = [t.strip() for t in st.session_state.tareas_extra if t.strip()]
+        tareas_validas = [
+            t if isinstance(t, dict) else {"texto": t, "tipo": "Implementación"}
+            for t in st.session_state.tareas_extra
+            if (t.get("texto", "") if isinstance(t, dict) else t).strip()
+        ]
         if tareas_validas:
             with st.spinner(f"🧠 Estimando {len(tareas_validas)} tarea(s) adicional(es)..."):
                 try:
@@ -355,8 +375,10 @@ with tab_proy:
                     if not backend.get("ok"):
                         st.error(f"Error cargando motor IA: {backend.get('err')}")
                     else:
-                        tag_proy = _resolve_tag(tipo_proy)
-                        for tarea in tareas_validas:
+                        for tarea_item in tareas_validas:
+                            tarea    = tarea_item["texto"].strip()
+                            tipo_t   = tarea_item.get("tipo", "Implementación")
+                            tag_proy = _resolve_tag(tipo_t)
                             r = _estimar_texto(tarea, tag_proy, metodo_proy, cx_extra, backend)
                             horas_ia = max(1, math.ceil(r["horas"]))
                             top1 = r["top"][0] if r["top"] else None
@@ -375,9 +397,9 @@ with tab_proy:
                                 ref += f" · Roles≈{matched}"
 
                             filas_res.append({
-                                "Origen":          "🤖 IA",
+                                "Origen":          f"🤖 IA ({tipo_t[:4]})",
                                 "Paquete / Tarea": tarea,
-                                "Integración":     tipo_proy,
+                                "Integración":     tipo_t,
                                 "TC (h)":          tc_h,
                                 "SC (h)":          sc_h,
                                 "PM (h)":          pm_h,
@@ -394,7 +416,6 @@ with tab_proy:
             st.session_state.resultado_proyecto = {
                 "filas":       filas_res,
                 "nombre":      nombre_proy,
-                "tipo":        tipo_proy,
                 "integracion": integ_proy,
             }
 
@@ -406,7 +427,7 @@ with tab_proy:
         st.divider()
         titulo_res = f"📊 Estimación: {rd['nombre']}" if rd["nombre"] else "📊 Estimación del Proyecto"
         st.subheader(titulo_res)
-        st.caption(f"Tipo: **{rd['tipo']}** · Integración base: **{rd['integracion']}**")
+        st.caption(f"Integración base: **{rd['integracion']}**")
 
         df_res = pd.DataFrame(filas)
 
@@ -462,7 +483,7 @@ with tab_proy:
             titulo_copia = rd["nombre"] or "Proyecto"
             lines = [
                 f"Estimación: {titulo_copia}",
-                f"Tipo: {rd['tipo']} · Integración: {rd['integracion']}",
+                f"Integración: {rd['integracion']}",
                 "",
             ]
             for f in filas:
@@ -492,7 +513,7 @@ with tab_proy:
             if st.form_submit_button("Guardar", type="primary"):
                 append_row_safe({
                     "timestamp":       time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "tipo":            _resolve_tag(rd["tipo"]),
+                    "tipo":            "implementacion",
                     "texto":           rd["nombre"],
                     "horas_estimadas": float(total_ajustado),
                     "horas_reales":    float(hr_real_p),
