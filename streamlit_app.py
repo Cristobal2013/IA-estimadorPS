@@ -353,14 +353,13 @@ with tab_proy:
         st.subheader("📦 Componentes del Proyecto")
         st.caption("Busca por nombre, tecnología o normativa. Puedes combinar libremente.")
 
-        # Controles de configuración compactos
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            integ_proy = st.selectbox("Integración", ["Full ASP", "Mixto", "On Premise", "Estandar"], key="integ_proy")
-        with c2:
-            cx_extra = st.select_slider("Complejidad", options=["baja", "media", "alta"], value="media", key="cx_proy")
-        with c3:
-            metodo_proy = st.selectbox("Método IA", ["faiss+xgb+catalog", "faiss+catalog", "faiss", "catalog"], key="met_proy")
+        # Solo Integración aquí — afecta las horas del catálogo
+        integ_proy = st.selectbox(
+            "Tipo de integración del cliente",
+            ["Full ASP", "Mixto", "On Premise", "Estandar"],
+            key="integ_proy",
+            help="Define qué variante de horas se usa en el catálogo. Full ASP = menor TC, On Premise = mayor TC.",
+        )
 
         if df_roles.empty:
             st.warning("No se encontró catalogo_roles.csv en data/")
@@ -385,19 +384,25 @@ with tab_proy:
             # Preview en tiempo real de lo seleccionado
             if componentes_sel:
                 prev = []
+                fallbacks = []
                 for opt in componentes_sel:
                     paq, esc = opt.split(" · ", 1)
                     sub = df_roles[(df_roles["paquete"] == paq) & (df_roles["escenario"] == esc)]
                     m = sub[sub["integracion"] == integ_proy]
+                    used_integ = integ_proy
                     if m.empty:
                         m = sub[sub["integracion"] == "Estandar"]
+                        used_integ = "Estandar"
                     if m.empty and not sub.empty:
                         m = sub.iloc[:1]
+                        used_integ = m.iloc[0]["integracion"]
                     if not m.empty:
                         r = m.iloc[0]
+                        if used_integ != integ_proy:
+                            fallbacks.append(f"**{opt}** → sin variante {integ_proy}, usa Estandar")
                         prev.append({
                             "Componente": opt,
-                            "Integración": r["integracion"],
+                            "Integración aplicada": used_integ,
                             "TC": r["tc"], "SC": r["sc"], "PM": r["pm"], "Total": r["total"],
                         })
                 if prev:
@@ -412,11 +417,22 @@ with tab_proy:
                             "Total": st.column_config.NumberColumn("Total (h)", format="%.1f"),
                         },
                     )
+                if fallbacks:
+                    st.caption("⚠️ " + " · ".join(fallbacks))
 
     # ── Tareas adicionales (IA)
     with col_extra:
         st.subheader("✍️ Tareas Adicionales (IA)")
         st.caption("Para actividades no en el catálogo. La IA estima con tickets históricos.")
+
+        # Complejidad y Método IA solo afectan estas tareas
+        cx1, cx2 = st.columns(2)
+        with cx1:
+            cx_extra = st.select_slider("Complejidad", options=["baja", "media", "alta"], value="media", key="cx_proy",
+                help="Sesga la estimación IA: alta = más horas")
+        with cx2:
+            metodo_proy = st.selectbox("Método IA", ["faiss+xgb+catalog", "faiss+catalog", "faiss", "catalog"], key="met_proy",
+                help="Algoritmo para estimar las tareas adicionales")
 
         tareas_ed = []
         for i, t in enumerate(st.session_state.tareas_extra):
