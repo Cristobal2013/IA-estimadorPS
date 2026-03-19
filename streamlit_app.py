@@ -87,7 +87,7 @@ def _estimar_texto(texto, tag, metodo, complexity, backend):
             final = alpha_eff * horas_faiss + (1.0 - alpha_eff) * horas_catalog
 
     # Rango de confianza basado en varianza de vecinos FAISS
-    hs_neigh = [h for (_, _, h) in top_tickets] if top_tickets else []
+    hs_neigh = [item["hours"] for item in top_tickets] if top_tickets else []
     if len(hs_neigh) >= 2:
         rango_min = max(0, math.ceil(final * 0.75))
         rango_max = math.ceil(final * 1.35)
