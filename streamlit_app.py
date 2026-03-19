@@ -614,17 +614,25 @@ with tab_proy:
         st.markdown("---")
         st.subheader("⏱️ Totales por Rol")
 
-        df_totales = pd.DataFrame({
-            "":          ["Suma directa", "Ajustado (PM compartido)"],
-            "👷 TC":     [round(total_tc, 1),        round(ajuste["tc"], 1)],
-            "💼 SC":     [round(total_sc, 1),        round(ajuste["sc"], 1)],
-            "📋 PM":     [round(total_pm, 1),        round(ajuste["pm"], 1)],
-            "🔢 Total":  [round(total_bruto, 1),     round(ajuste["total_ajustado"], 1)],
-        })
-        st.dataframe(df_totales, hide_index=True, use_container_width=True)
-
+        _r = lambda v: int(round(v))
         if ajuste["ahorro_pm"] > 0:
-            st.caption(f"💡 {ajuste['nota']} — ahorro: **{ajuste['ahorro_pm']:.1f}h PM**")
+            df_totales = pd.DataFrame({
+                "":         ["Suma directa", "Ajustado"],
+                "👷 TC":    [_r(total_tc),    _r(ajuste["tc"])],
+                "💼 SC":    [_r(total_sc),    _r(ajuste["sc"])],
+                "📋 PM":    [_r(total_pm),    _r(ajuste["pm"])],
+                "🔢 Total": [_r(total_bruto), _r(ajuste["total_ajustado"])],
+            })
+            st.dataframe(df_totales, hide_index=True, use_container_width=True)
+            st.caption(f"💡 {ajuste['nota']} — ahorro PM: **{_r(ajuste['ahorro_pm'])}h**")
+        else:
+            df_totales = pd.DataFrame({
+                "👷 TC":    [_r(total_tc)],
+                "💼 SC":    [_r(total_sc)],
+                "📋 PM":    [_r(total_pm)],
+                "🔢 Total": [_r(total_bruto)],
+            })
+            st.dataframe(df_totales, hide_index=True, use_container_width=True)
 
         # ── Análisis Gemini
         st.divider()
@@ -656,8 +664,8 @@ with tab_proy:
                 )
             lines += [
                 "",
-                f"SUMA DIRECTA   → TC:{total_tc:.1f}h | SC:{total_sc:.1f}h | PM:{total_pm:.1f}h | Total:{total_bruto:.1f}h",
-                f"AJUSTADO       → TC:{ajuste['tc']:.1f}h | SC:{ajuste['sc']:.1f}h | PM:{ajuste['pm']:.1f}h | Total:{ajuste['total_ajustado']:.1f}h",
+                f"SUMA DIRECTA   → TC:{_r(total_tc)}h | SC:{_r(total_sc)}h | PM:{_r(total_pm)}h | Total:{_r(total_bruto)}h",
+                f"AJUSTADO       → TC:{_r(ajuste['tc'])}h | SC:{_r(ajuste['sc'])}h | PM:{_r(ajuste['pm'])}h | Total:{_r(ajuste['total_ajustado'])}h",
             ]
             st.code("\n".join(lines), language=None)
 
