@@ -64,10 +64,11 @@ CATALOGO_PSTC  = DATA_DIR / "catalogo_pstc.csv"
 NEW_EST_CSV    = DATA_DIR / "estimaciones_nuevas.csv"
 
 
-MODEL_NAME  = os.environ.get("EMB_MODEL", "sentence-transformers/paraphrase-MiniLM-L3-v2")
-MAX_SEQ_LEN = int(os.environ.get("MAX_SEQ_LEN", "256"))
-EMB_BATCH   = int(os.environ.get("EMB_BATCH", "8"))
-LAZY_BOOT   = os.environ.get("LAZY_BOOT", "1") == "1"  # evita reentrenos pesados en boot
+MODEL_NAME   = os.environ.get("EMB_MODEL", "sentence-transformers/all-mpnet-base-v2")
+MAX_SEQ_LEN  = int(os.environ.get("MAX_SEQ_LEN", "384"))
+EMB_BATCH    = int(os.environ.get("EMB_BATCH", "8"))
+SIM_THRESHOLD = float(os.environ.get("SIM_THRESHOLD", "0.5"))  # descarta vecinos poco similares
+LAZY_BOOT    = os.environ.get("LAZY_BOOT", "1") == "1"
 
 # ---------- Embeddings (singleton) ----------
 _MODEL: Optional[SentenceTransformer] = None
@@ -104,6 +105,7 @@ def _emb_hash_path(tag: str)-> Path: return INDEX_DIR / f"embs_{tag}.hash"
 # ---------- Caché de embeddings ----------
 def _texts_hash(texts: List[str]) -> str:
     h = hashlib.md5()
+    h.update(MODEL_NAME.encode())  # si cambia el modelo, invalida el caché
     for t in texts:
         h.update(t.encode("utf-8", errors="replace"))
     return h.hexdigest()
@@ -403,6 +405,8 @@ class EmbeddingsFaissEstimator:
         neigh = []
         for i, s in zip(idxs, sims):
             if i == -1:
+                continue
+            if float(s) < SIM_THRESHOLD:  # descarta vecinos poco similares
                 continue
             neigh.append((int(i), float(s), float(self.hours[i])))
         # --- Promedio ponderado robusto ---
