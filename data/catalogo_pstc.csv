@@ -60,3 +60,50 @@ Set Basico DTE FA NC ND Adicional certificacion,7,certificacion
 Set Exportación certificacion,7,certificacion
 Set Pruebas GD FC LF certificacion,5,certificacion
 Set Boletas certificacion,4,certificacion
+Instalacion filtros nuevos,10,instalacion
+Instalación de plantillas QA y PRD,5,instalacion
+Instalar filtro personalizado QA PRD,5,instalacion
+Instalacion nuevos epos horario habil,18,instalacion
+Instalacion QA,2,instalacion
+Instalacion PRD,2,instalacion
+Instalacion Postgres,4,instalacion
+Rollout cajas POS,80,instalacion
+Configuración Egateway proyecto completo agentes variables,60,configuracion
+Habilitar OT en eServer Sovos filtro personalizado,10,configuracion
+ASML regla contribuyentes autorizados,15,configuracion
+XPML para clientes personalizados,15,configuracion
+Config filtro full,8,configuracion
+Carga filtro y otras configuraciones QA PRD,6,configuracion
+Habilitar notificaciones paso a soporte,4,configuracion
+Cambio giro y direccion empresa,8,configuracion
+Configuraciones migracion,5,configuracion
+Actualizacion Egateway QA y PRD,20,actualizacion
+Creación empresa Eserver QA y PRD,15,creacion
+Habilitación envío 1 a 1 documentos manuales SAP QA PRD,30,habilitacion
+Habilitación módulo e-trace 25 Rut,10,habilitacion
+Habilitar LCE QA PRD 2 Rut,15,habilitacion
+HH de prueba QA PRD,40,pruebas
+Apoyo UAT,12,pruebas
+Testing Hypercare PRD,15,pruebas
+Testing Hypercare QA,5,pruebas
+Estabilizacion,25,soporte
+Traspaso a Soporte,3,soporte
+Soporte post implementacion,1,soporte
+Apoyo en salida en vivo Go Live,15,goLive
+Go Live Hypercare,5,goLive
+Migracion APP PRD,5,migracion
+Migracion Storage PRD,7,migracion
+Migracion Data BBDD PRD,7,migracion
+Migracion APP QA,2,migracion
+Migracion Storage QA,3,migracion
+Migracion Data BBDD QA,3,migracion
+Generacion de ejemplos plantillas grande,8,diseño
+Ajuste plantillas proyecto grande,20,diseño
+Envio Muestras plantillas,1,diseño
+Iteraciones plantillas,1,diseño
+Creacion jasper en funcion de logos,16,diseño
+Generacion plantilla full para visualizacion,8,diseño
+Modificacion template BO POS,15,diseño
+Modificacion mailing iteraciones,2,diseño
+Carga mailing UAT,1,diseño
+Carga en PRD mailing,1,diseño

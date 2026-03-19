@@ -1,4 +1,14 @@
 text,hours,categoria
+Toma de Requerimientos reuniones SC,2,proceso
+Revisión de código,1,proceso
+Pruebas Unitarias,5,proceso
+Compilación y aprobación de código,2,proceso
+Carga en ambiente UAT,1,proceso
+Iteraciones en caso de modificaciones,2,proceso
+Carga en PRD,1,proceso
+Apoyo salida en vivo desarrollo,2,proceso
+Entrega SFTP cliente,10,proceso
+Período de Soporte Inicial,4,soporte
 ePos agregar rut al filtro cada 3 a 5 ruts,4,filtro
 Filtro Extender nuevo Rut,8,filtro
 Modificar Plantilla PPL sin filtro por plantilla,10,plantilla
@@ -20,6 +30,47 @@ Agregar información a reporte userExit factible si info está en base de datos,
 Crear filtro full en filtro personalizado por tipo de DTE,12,filtro
 Creacion Reporte Extendido Peru estimacion cantidad de campos basico,40,reporte
 Modificar agentes de transporte,32,agentes
+Desarrollo filtro personalizado pequeño,50,filtro
+Desarrollo filtro personalizado grande complejo,95,filtro
+Agregar restantes rut a filtro,10,filtro
+Iteraciones mapeo desconocido,20,filtro
+Incorporacion RutOtro a filtro pos y BO,45,filtro
+Desarrollo filtro Easy BO,20,filtro
+Modificacion Filtro pos seccion PEDH,40,filtro
+Modificacion Filtro soporte seccion intercambio,20,filtro
+Desarrollo Filtro Libro Compra Venta,40,filtro
+Modificar jar para dejar respuestas en sftp,45,filtro
+Desarrollo ajuste filtro xsl,10,filtro
+Desarrollo filtro Pos Easy agregar personalizado,30,filtro
+Apoyo creacion archivo intercambio iteracion,40,filtro
+Ajuste Filtro carpeta,35,filtro
+Creacion Filtro procesamiento OT desde sftp,60,filtro
+Modificacion Filtro agregar personalizado OT 2 RUT,25,filtro
+Modificacion Filtro agregar personalizado WS 2 RUT,10,filtro
+Modificacion Filtro agregar nuevos campos BO,20,filtro
+Modificacion Filtro agregar nuevos campos POS,20,filtro
+Desarrollo Modificacion campos filtro,12,filtro
+Desarrollo conexión sftp,6,filtro
+Desarrollo Libro venta,100,reporte
+Desarrollo Reporte Personalizado 2 RUC,40,reporte
+Desarrollo Reporte con entrega SFTP,30,reporte
+Agregar columna a reporte emitido,10,reporte
+Desarrollo userexit rescate correos,20,post-proceso
+Desarrollo userexit logica envio xml pdf cdr,40,post-proceso
+Desarrollo userexit obtencion dato reporte,20,post-proceso
+Desarrollo userexit modificacion descarga reporte,15,post-proceso
+Crear userexit envio boletas,10,post-proceso
+Desarrollo creacion agentes transporte SFTP Sovos,40,agentes
+Desarrollo creacion agentes transporte SFTP Cliente,50,agentes
+Creacion agente envio xml recibidos Egateway,50,agentes
+Creacion Agente envio SFTP,30,agentes
+Desarrollo Referencias,45,filtro
+Creacion anexo 2 empresas TC,12,filtro
+Modificacion Template carga UAT PRD,8,plantilla
+Configuraciones ASP agentes UAT 2 RUT,3,configuracion
+Configuraciones FM UAT,4,configuracion
+Configuraciones FM PRD,4,configuracion
+Configuraciones ASP agentes PRD,3,configuracion
 Agregar nuevo tag a filtro,8,filtro
 Agregar nuevos tags a filtro personalizado,16,filtro
 Agregar campo nuevo a guia de despacho,16,filtro
