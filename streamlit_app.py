@@ -258,6 +258,29 @@ def _ajuste_proyecto(filas: list) -> dict:
 
 
 # ══════════════════════════════════════════════════════
+# GUARDAR / CARGAR PROYECTOS
+# ══════════════════════════════════════════════════════
+import json
+
+_PROYECTOS_FILE = os.path.join(os.path.dirname(__file__), "data", "proyectos_guardados.json")
+
+def _load_proyectos() -> list:
+    if not os.path.exists(_PROYECTOS_FILE):
+        return []
+    try:
+        with open(_PROYECTOS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+def _save_proyecto(entry: dict):
+    proyectos = _load_proyectos()
+    proyectos.append(entry)
+    with open(_PROYECTOS_FILE, "w", encoding="utf-8") as f:
+        json.dump(proyectos, f, ensure_ascii=False, indent=2)
+
+
+# ══════════════════════════════════════════════════════
 # ANÁLISIS GEMINI DEL PROYECTO COMPLETO
 # ══════════════════════════════════════════════════════
 def _gemini_proyecto(nombre: str, integ: str, filas: list, ajuste: dict) -> str | None:
@@ -673,26 +696,37 @@ with tab_proy:
         st.divider()
         with st.form("form_proy_save"):
             st.subheader("💾 Guardar Estimación")
-            cp1, cp2 = st.columns(2)
-            with cp1:
-                hr_real_p = st.number_input("Horas reales (post-proyecto)", min_value=0.0, step=1.0)
-            with cp2:
-                com_p = st.text_input("Comentarios")
-            if st.form_submit_button("Guardar", type="primary"):
-                append_row_safe({
-                    "timestamp":       time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "tipo":            "implementacion",
-                    "texto":           rd["nombre"],
-                    "horas_estimadas": float(ajuste["total_ajustado"]),
-                    "horas_reales":    float(hr_real_p),
-                    "diferencia":      round(float(hr_real_p) - ajuste["total_ajustado"], 2),
-                    "top_ticket":      "",
-                    "top_sim":         0,
-                    "metodo":          "catalogo_proyecto",
-                    "autor":           "streamlit_proyecto",
-                    "comentarios":     com_p,
+            nombre_save = st.text_input("Nombre del proyecto", value=rd["nombre"] or "")
+            desc_save   = st.text_area("Descripción / Alcance", height=80,
+                placeholder="Ej: Cliente nuevo, DTE emisión y recepción, incluye go-live...")
+            com_save    = st.text_input("Comentarios internos")
+            if st.form_submit_button("💾 Guardar", type="primary"):
+                _save_proyecto({
+                    "timestamp":   time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "nombre":      nombre_save,
+                    "descripcion": desc_save,
+                    "integracion": rd["integracion"],
+                    "componentes": [
+                        {
+                            "origen": row["Origen"],
+                            "tarea":  row["Paquete / Tarea"],
+                            "TC":     int(row["TC (h)"]),
+                            "SC":     int(row["SC (h)"]),
+                            "PM":     int(row["PM (h)"]),
+                            "total":  int(row["TC (h)"]) + int(row["SC (h)"]) + int(row["PM (h)"]),
+                        }
+                        for row in edited.to_dict("records")
+                    ],
+                    "totales": {
+                        "TC":             _r(total_tc),
+                        "SC":             _r(total_sc),
+                        "PM":             _r(total_pm),
+                        "total_bruto":    _r(total_bruto),
+                        "total_ajustado": _r(ajuste["total_ajustado"]),
+                    },
+                    "comentarios": com_save,
                 })
-                st.success("✅ Guardado correctamente.")
+                st.success("✅ Proyecto guardado.")
 
 
 # ══════════════════════════════════════════════════════
@@ -832,15 +866,49 @@ with tab_historial:
         st.info("Aún no hay estimaciones guardadas.")
 
     st.divider()
-    st.subheader("📥 Descargar Datos")
-    st.caption("Streamlit borra los archivos al reiniciarse. Descarga tu CSV regularmente.")
-    if os.path.exists(csv_path):
-        with open(csv_path, "rb") as f:
-            st.download_button(
-                label="⬇️ Descargar estimaciones_nuevas.csv",
-                data=f,
-                file_name="estimaciones_nuevas.csv",
-                mime="text/csv",
-            )
+
+    # ── Proyectos guardados
+    st.subheader("📁 Proyectos Guardados")
+    proyectos = _load_proyectos()
+    if not proyectos:
+        st.info("Aún no hay proyectos guardados. Estima un proyecto y guárdalo desde el Tab 1.")
     else:
-        st.info("Aún no hay datos para descargar.")
+        for p in reversed(proyectos):
+            label = f"**{p['nombre'] or 'Sin nombre'}** · {p['timestamp'][:10]} · {p['integracion']} · Total: {p['totales']['total_ajustado']}h"
+            with st.expander(label):
+                if p.get("descripcion"):
+                    st.caption(p["descripcion"])
+                df_comp = pd.DataFrame(p["componentes"])
+                st.dataframe(df_comp, hide_index=True, use_container_width=True)
+                t = p["totales"]
+                st.markdown(
+                    f"**Totales →** TC: {t['TC']}h &nbsp;|&nbsp; SC: {t['SC']}h &nbsp;|&nbsp; PM: {t['PM']}h"
+                    f" &nbsp;|&nbsp; **Total ajustado: {t['total_ajustado']}h**",
+                    unsafe_allow_html=True,
+                )
+                if p.get("comentarios"):
+                    st.caption(f"💬 {p['comentarios']}")
+
+        # Descarga JSON
+        st.divider()
+        st.subheader("📥 Descargar Datos")
+        st.caption("Descarga regularmente — Streamlit puede borrar archivos al reiniciarse.")
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            if os.path.exists(_PROYECTOS_FILE):
+                with open(_PROYECTOS_FILE, "rb") as f:
+                    st.download_button(
+                        "⬇️ Descargar proyectos_guardados.json",
+                        data=f,
+                        file_name="proyectos_guardados.json",
+                        mime="application/json",
+                    )
+        with col_d2:
+            if os.path.exists(csv_path):
+                with open(csv_path, "rb") as f:
+                    st.download_button(
+                        "⬇️ Descargar estimaciones_nuevas.csv",
+                        data=f,
+                        file_name="estimaciones_nuevas.csv",
+                        mime="text/csv",
+                    )
