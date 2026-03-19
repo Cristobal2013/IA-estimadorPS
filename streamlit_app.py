@@ -75,21 +75,21 @@ def _estimar_texto(texto, tag, metodo, complexity, backend):
     except Exception:
         horas_xgb = 0.0
 
-    alpha = 0.8
-    bias_map = {"baja": -0.1, "media": 0.0, "alta": +0.1}
-    alpha_eff = max(0.3, min(0.98, alpha + bias_map.get(complexity, 0.0)))
-
     if metodo == "faiss":
         final = horas_faiss
     elif metodo == "catalog":
         final = horas_catalog
     elif metodo == "faiss+catalog":
-        final = alpha_eff * horas_faiss + (1.0 - alpha_eff) * horas_catalog
+        final = 0.8 * horas_faiss + 0.2 * horas_catalog
     else:  # faiss+xgb+catalog
         if horas_xgb > 0:
             final = 0.45 * horas_faiss + 0.40 * horas_xgb + 0.15 * horas_catalog
         else:
-            final = alpha_eff * horas_faiss + (1.0 - alpha_eff) * horas_catalog
+            final = 0.8 * horas_faiss + 0.2 * horas_catalog
+
+    # Multiplicador de complejidad aplicado siempre al resultado final
+    cx_mult = {"baja": 0.85, "media": 1.00, "alta": 1.20}
+    final = final * cx_mult.get(complexity, 1.00)
 
     hs = [item["hours"] for item in top_tickets] if top_tickets else []
     rango_min = max(0, math.ceil(final * 0.75)) if len(hs) >= 2 else math.ceil(final)
