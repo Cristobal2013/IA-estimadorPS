@@ -140,12 +140,14 @@ def _lazy_backend():
             load_labeled_dataframe,
             train_index_per_type,
             estimate_from_catalog,
+            predict_xgb,
         )
         return {
             "EmbeddingsFaissEstimator": EmbeddingsFaissEstimator,
             "load_labeled_dataframe": load_labeled_dataframe,
             "train_index_per_type": train_index_per_type,
             "estimate_from_catalog": estimate_from_catalog,
+            "predict_xgb": predict_xgb,
             "ok": True, "err": None
         }
     except Exception as e:
@@ -191,6 +193,7 @@ def api_estimate():
     load_df = backend["load_labeled_dataframe"]
     train_ix = backend["train_index_per_type"]
     est_cat = backend["estimate_from_catalog"]
+    pred_xgb = backend["predict_xgb"]
 
     est = Emb(tag)
     loaded = False
@@ -244,22 +247,29 @@ def api_estimate():
     except Exception:
         horas_catalog = 0.0
 
-    metodo_norm = metodo if metodo in {"faiss","catalog","faiss+catalog"} else "faiss+catalog"
-    alpha = _to_float(os.environ.get("HYBRID_ALPHA", "0.8"))
+    try:
+        horas_xgb = _to_float(pred_xgb(texto, tag))
+    except Exception:
+        horas_xgb = 0.0
 
-    # 🔹 Nuevo: ajuste dinámico por complejidad
+    metodo_norm = metodo if metodo in {"faiss","catalog","faiss+catalog","faiss+xgb+catalog"} else "faiss+xgb+catalog"
     complexity = (data.get("complexity") or "media").lower()
     bias_map = {"baja": -0.1, "media": 0.0, "alta": +0.1}
     bias = bias_map.get(complexity, 0.0)
+    alpha = _to_float(os.environ.get("HYBRID_ALPHA", "0.8"))
     alpha_eff = max(0.3, min(0.98, alpha + bias))
 
-    # 🔹 Cálculo híbrido con alpha ajustado
     if metodo_norm == "faiss":
         hybrid = horas_faiss
     elif metodo_norm == "catalog":
         hybrid = horas_catalog
-    else:
+    elif metodo_norm == "faiss+catalog":
         hybrid = alpha_eff * horas_faiss + (1.0 - alpha_eff) * horas_catalog
+    else:  # faiss+xgb+catalog
+        if horas_xgb > 0:
+            hybrid = 0.45 * horas_faiss + 0.40 * horas_xgb + 0.15 * horas_catalog
+        else:
+            hybrid = alpha_eff * horas_faiss + (1.0 - alpha_eff) * horas_catalog
 
     resp = {
         "ok": True,
@@ -267,9 +277,9 @@ def api_estimate():
         "metodo": metodo_norm,
         "detalle": {
             "faiss": float(horas_faiss),
+            "xgb": float(horas_xgb),
             "catalogo": float(horas_catalog),
             "final_sin_redondeo": float(round(_to_float(hybrid), 2)),
-            "alpha": alpha_eff if metodo_norm == "faiss+catalog" else None,
             "complexity": complexity
         },
         "top": top

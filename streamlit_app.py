@@ -31,7 +31,7 @@ with col_izq:
 with col_der:
     st.subheader("Configuración")
     tipo = st.selectbox("Tipo de Tarea", ["Desarrollo", "Implementación"])
-    metodo = st.selectbox("Método", ["faiss+catalog", "faiss", "catalog"])
+    metodo = st.selectbox("Método", ["faiss+xgb+catalog", "faiss+catalog", "faiss", "catalog"])
     complexity = st.select_slider("Complejidad Percibida", options=["baja", "media", "alta"], value="media")
     
     btn_estimar = st.button("🚀 Calcular Estimación", use_container_width=True, type="primary")
@@ -94,7 +94,15 @@ if btn_estimar:
                 except:
                     horas_catalog = 0.0
 
-                # 7. Cálculo Híbrido (Igual que en tu app.py)
+                # 7. Predicción XGBoost
+                horas_xgb = 0.0
+                try:
+                    from estimator import predict_xgb
+                    horas_xgb = _to_float(predict_xgb(texto, tag))
+                except:
+                    horas_xgb = 0.0
+
+                # 8. Cálculo Híbrido
                 alpha = 0.8
                 bias_map = {"baja": -0.1, "media": 0.0, "alta": +0.1}
                 alpha_eff = max(0.3, min(0.98, alpha + bias_map[complexity]))
@@ -103,13 +111,19 @@ if btn_estimar:
                     final = horas_faiss
                 elif metodo == "catalog":
                     final = horas_catalog
-                else:
+                elif metodo == "faiss+catalog":
                     final = alpha_eff * horas_faiss + (1.0 - alpha_eff) * horas_catalog
+                else:  # faiss+xgb+catalog
+                    if horas_xgb > 0:
+                        final = 0.45 * horas_faiss + 0.40 * horas_xgb + 0.15 * horas_catalog
+                    else:
+                        final = alpha_eff * horas_faiss + (1.0 - alpha_eff) * horas_catalog
 
                 # Guardar en sesión para que no se borre al interactuar
                 st.session_state.resultado = {
                     "horas": final,
                     "faiss": horas_faiss,
+                    "xgb": horas_xgb,
                     "catalogo": horas_catalog,
                     "top": top_tickets,
                     "texto": texto,
@@ -127,10 +141,11 @@ if st.session_state.resultado:
     st.divider()
     
     # Métricas grandes
-    m1, m2, m3 = st.columns(3)
-    m1.metric("⏱️ Estimación Final", f"{res['horas']:.1f} hrs")
-    m2.metric("📚 Base Histórica", f"{res['faiss']:.1f} hrs")
-    m3.metric("📋 Catálogo", f"{res['catalogo']:.1f} hrs")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("⏱️ Estimación Final", f"{math.ceil(res['horas'])} hrs")
+    m2.metric("📚 FAISS (similitud)", f"{res['faiss']:.1f} hrs")
+    m3.metric("🤖 XGBoost (regresión)", f"{res.get('xgb', 0):.1f} hrs")
+    m4.metric("📋 Catálogo", f"{res['catalogo']:.1f} hrs")
 
     # Tabla de tickets similares
     st.subheader("Tickets Similares Encontrados")

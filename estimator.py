@@ -101,6 +101,73 @@ def _hours_path(tag: str)   -> Path: return INDEX_DIR / f"faiss_{tag}_hours.json
 def _dataset_path(tag: str) -> Path: return INDEX_DIR / f"faiss_{tag}_dataset.csv"
 def _emb_npy_path(tag: str) -> Path: return INDEX_DIR / f"embs_{tag}.npy"
 def _emb_hash_path(tag: str)-> Path: return INDEX_DIR / f"embs_{tag}.hash"
+def _xgb_path(tag: str)     -> Path: return INDEX_DIR / f"xgb_{tag}.pkl"
+
+# ---------- XGBoost: extracción de features ----------
+_COUNTRIES  = ["cl","ar","mx","pe","co","br","uy","ec","bo","py","cr","gt","sv","hn","do","cu","ve","pa"]
+_MODULES    = ["ppl","fiscal","tributar","integr","report","migr","certif","xml","json",
+               "api","nomina","contab","factur","impuest","validaci","configur","ui","bd","base de datos"]
+_COMPLEXITY = ["nuevo","nueva","modificar","agregar","eliminar","crear","implementar",
+               "actualizar","corregir","revisar","analizar","documentar"]
+
+def _extract_features(text: str) -> np.ndarray:
+    t = text.lower()
+    brackets = re.findall(r'\[([^\]]+)\]', t)
+    bracket_lower = [b.lower() for b in brackets]
+    country_vec  = [1.0 if c in bracket_lower or f"[{c}]" in t else 0.0 for c in _COUNTRIES]
+    module_vec   = [1.0 if m in t else 0.0 for m in _MODULES]
+    complex_vec  = [1.0 if k in t else 0.0 for k in _COMPLEXITY]
+    stats = [
+        min(len(text.split()) / 50.0, 6.0),   # largo del texto normalizado
+        min(len(brackets) / 5.0, 4.0),         # cantidad de etiquetas [...]
+        float(len(bracket_lower)),              # num etiquetas raw
+    ]
+    return np.array(country_vec + module_vec + complex_vec + stats, dtype="float32")
+
+def _features_matrix(texts: List[str]) -> np.ndarray:
+    return np.vstack([_extract_features(t) for t in texts])
+
+# ---------- XGBoost: entrenar y guardar ----------
+def _train_and_save_xgb(tag: str, embs: np.ndarray, texts: List[str], hours: List[float]):
+    try:
+        from xgboost import XGBRegressor
+        import pickle
+        y = np.array(hours, dtype="float32")
+        mask = y > 0
+        if mask.sum() < 20:
+            print(f"[XGB] Muy pocos datos con horas ({mask.sum()}), saltando entrenamiento.")
+            return
+        feats = _features_matrix(texts)
+        X = np.hstack([embs, feats])
+        model = XGBRegressor(
+            n_estimators=400, max_depth=5, learning_rate=0.05,
+            subsample=0.8, colsample_bytree=0.8,
+            min_child_weight=3, random_state=42, n_jobs=1, verbosity=0
+        )
+        model.fit(X[mask], y[mask])
+        with open(_xgb_path(tag), "wb") as f:
+            pickle.dump(model, f)
+        print(f"[XGB] Modelo entrenado con {mask.sum()} muestras ({tag}).")
+    except Exception as e:
+        print(f"[XGB] Error entrenando: {e}")
+
+# ---------- XGBoost: predecir ----------
+def predict_xgb(text: str, tag: str) -> float:
+    p = _xgb_path(tag)
+    if not p.exists():
+        return 0.0
+    try:
+        import pickle
+        with open(p, "rb") as f:
+            model = pickle.load(f)
+        emb  = _embed_texts([text])
+        feat = _extract_features(text).reshape(1, -1)
+        X    = np.hstack([emb, feat])
+        pred = float(model.predict(X)[0])
+        return max(0.0, pred)
+    except Exception as e:
+        print(f"[XGB] Error prediciendo: {e}")
+        return 0.0
 
 # ---------- Caché de embeddings ----------
 def _texts_hash(texts: List[str]) -> str:
@@ -454,6 +521,7 @@ def _build_from_frame(tag: str, df: pd.DataFrame) -> int:
     est = EmbeddingsFaissEstimator(tag)
     est.fit_from_embs(embs, hours)
     est.save()
+    _train_and_save_xgb(tag, embs, texts, hours)
     df[["text","hours","ticket","source"]].to_csv(_dataset_path(tag), index=False, encoding="utf-8")
     return len(df)
 
