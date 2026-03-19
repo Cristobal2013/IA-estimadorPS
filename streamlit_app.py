@@ -4,6 +4,7 @@ import os
 import time
 import math
 
+
 # --- IMPORTAMOS TU LÓGICA EXISTENTE ---
 # Esto reutiliza lo que ya programaste en app.py y estimator.py
 from app import _lazy_backend, _resolve_tag, _to_float, append_row_safe
@@ -196,57 +197,6 @@ if st.session_state.resultado:
                     st.success("✅ Guardado. Ingresa horas reales para mejorar el modelo.")
             except Exception as e:
                 st.error(f"Error guardando: {e}")
-
-# --- ANÁLISIS CON GEMINI AI ---
-if st.session_state.resultado:
-    res = st.session_state.resultado
-    st.divider()
-    if st.button("🤖 Analizar con Gemini AI", use_container_width=True):
-        api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-        if not api_key:
-            st.warning("⚠️ Configura la variable de entorno `GEMINI_API_KEY` en HF Spaces → Settings → Variables.")
-        else:
-            tipo_nombre = "CESQ (Desarrollo)" if "des" in res["tipo"] else "PSTC (Implementación)"
-            similares_txt = ""
-            for i, t in enumerate(res["top"][:3], 1):
-                similares_txt += (
-                    f"\n{i}. Ticket {t.get('ticket','?')} — "
-                    f"{t.get('hours', 0):.0f}h — Similitud: {t.get('sim', 0):.3f}\n"
-                    f"   Descripción: {str(t.get('text',''))[:250]}"
-                )
-            prompt = f"""Eres un experto en estimación de esfuerzo para tickets Jira en proyectos de software fiscal y tributario (Sovos).
-
-TICKET A ESTIMAR ({tipo_nombre}):
-{res['texto']}
-
-ESTIMACIÓN INICIAL DEL SISTEMA: {math.ceil(res['horas']):.0f}h
-
-TICKETS HISTÓRICOS MÁS SIMILARES ENCONTRADOS:{similares_txt}
-
-Analiza y responde con estas 4 secciones:
-
-**1. Comparabilidad con históricos**
-¿Los tickets similares son realmente comparables? ¿Qué tienen en común y qué difiere?
-
-**2. Riesgos y complejidades adicionales**
-¿Qué factores podría haber pasado por alto el sistema? (integraciones, país, normativa, dependencias)
-
-**3. Rango de estimación recomendado**
-Mínimo — Máximo horas, con justificación breve.
-
-**4. Confianza**
-Alta / Media / Baja — una oración explicando por qué.
-
-Responde en español. Sé directo y práctico."""
-            with st.spinner("Consultando Gemini AI..."):
-                try:
-                    import google.generativeai as genai
-                    genai.configure(api_key=api_key)
-                    model = genai.GenerativeModel("gemini-2.0-flash")
-                    response = model.generate_content(prompt)
-                    st.info(response.text)
-                except Exception as e:
-                    st.error(f"Error al consultar Gemini: {e}")
 
 # --- MÉTRICAS DE PRECISIÓN DEL MODELO ---
 csv_path = "data/estimaciones_nuevas.csv"
