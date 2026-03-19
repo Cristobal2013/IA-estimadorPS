@@ -52,10 +52,16 @@ def _estimar_texto(texto, tag, metodo, complexity, backend):
             })
 
     horas_catalog = 0.0
+    catalog_match = ""
     try:
-        horas_catalog = _to_float(est_cat(texto, tag, top_n=3, min_cover=0.35))
+        from estimator import estimate_from_catalog_with_match
+        horas_catalog, catalog_match = estimate_from_catalog_with_match(texto, tag, top_n=3, min_cover=0.35)
+        horas_catalog = _to_float(horas_catalog)
     except:
-        horas_catalog = 0.0
+        try:
+            horas_catalog = _to_float(est_cat(texto, tag, top_n=3, min_cover=0.35))
+        except:
+            horas_catalog = 0.0
 
     horas_xgb = 0.0
     try:
@@ -80,12 +86,23 @@ def _estimar_texto(texto, tag, metodo, complexity, backend):
         else:
             final = alpha_eff * horas_faiss + (1.0 - alpha_eff) * horas_catalog
 
+    # Rango de confianza basado en varianza de vecinos FAISS
+    hs_neigh = [h for (_, _, h) in top_tickets] if top_tickets else []
+    if len(hs_neigh) >= 2:
+        rango_min = max(0, math.ceil(final * 0.75))
+        rango_max = math.ceil(final * 1.35)
+    else:
+        rango_min = rango_max = math.ceil(final)
+
     return {
         "horas": final,
         "faiss": horas_faiss,
         "xgb": horas_xgb,
         "catalogo": horas_catalog,
+        "catalog_match": catalog_match,
         "top": top_tickets,
+        "rango_min": rango_min,
+        "rango_max": rango_max,
     }
 
 
@@ -190,6 +207,7 @@ with tab_desglose:
                             "faiss": r["faiss"],
                             "xgb": r["xgb"],
                             "catalogo": r["catalogo"],
+                            "catalog_match": r.get("catalog_match", ""),
                         })
                     st.session_state.resultado_desglose = {
                         "filas": resultados_desglose,
@@ -203,36 +221,53 @@ with tab_desglose:
     if st.session_state.resultado_desglose:
         rd = st.session_state.resultado_desglose
         st.divider()
+        st.subheader("📊 Desglose por Tarea")
+        st.caption("Puedes ajustar las horas en la columna **'Horas ajustadas'** antes de guardar.")
 
-        # Tabla de desglose
         filas = rd["filas"]
-        total_horas = sum(f["horas"] for f in filas)
+        total_ia = sum(math.ceil(f["horas"]) for f in filas)
 
-        df_tabla = pd.DataFrame([{
-            "Tarea": f["tarea"],
-            "FAISS": f"{f['faiss']:.1f}h",
-            "XGBoost": f"{f['xgb']:.1f}h",
-            "Catálogo": f"{f['catalogo']:.1f}h",
-            "Estimación": f"{math.ceil(f['horas'])}h",
+        # Tabla editable con st.data_editor
+        df_edit = pd.DataFrame([{
+            "Tarea":              f["tarea"],
+            "IA estima":          round(f["horas"], 1),
+            "Horas ajustadas":    math.ceil(f["horas"]),
+            "FAISS":              round(f["faiss"], 1),
+            "XGBoost":            round(f["xgb"], 1),
+            "Catálogo":           round(f["catalogo"], 1),
+            "Mejor match catálogo": f.get("catalog_match", "—"),
         } for f in filas])
 
-        st.subheader("📊 Desglose por Tarea")
-        st.dataframe(df_tabla, use_container_width=True, hide_index=True)
+        edited = st.data_editor(
+            df_edit,
+            column_config={
+                "Horas ajustadas": st.column_config.NumberColumn(
+                    "Horas ajustadas ✏️", min_value=0, max_value=2000, step=1,
+                    help="Edita este valor para ajustar la estimación"
+                ),
+            },
+            disabled=["Tarea", "IA estima", "FAISS", "XGBoost", "Catálogo", "Mejor match catálogo"],
+            hide_index=True,
+            use_container_width=True,
+        )
 
-        # Total
-        st.markdown(f"### ⏱️ Total estimado: **{math.ceil(total_horas)} horas**")
-        st.caption(f"Suma de {len(filas)} tareas · Método: {rd['metodo']}")
+        total_ajustado = int(edited["Horas ajustadas"].sum())
+        diferencia = total_ajustado - total_ia
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("🤖 Total IA", f"{total_ia}h")
+        c2.metric("✏️ Total Ajustado", f"{total_ajustado}h",
+                  delta=f"{diferencia:+d}h" if diferencia != 0 else "Sin cambios")
+        c3.metric("Tareas", len(filas))
 
         # Guardar feedback del desglose
         st.divider()
         st.subheader("💾 Guardar Feedback")
         with st.form("form_desglose"):
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.metric("Estimación IA", f"{math.ceil(total_horas)} h")
-            with c2:
-                horas_reales_d = st.number_input("Horas reales totales", min_value=0.0, step=0.5, key="hr_des")
-            with c3:
+            col_a, col_b = st.columns(2)
+            with col_a:
+                horas_reales_d = st.number_input("Horas reales totales (una vez terminado)", min_value=0.0, step=0.5, key="hr_des")
+            with col_b:
                 comentarios_d = st.text_input("Comentario / ID ticket", key="com_des")
             submitted_d = st.form_submit_button("Confirmar y Guardar", type="primary")
             if submitted_d:
@@ -241,9 +276,9 @@ with tab_desglose:
                     "timestamp":       time.strftime("%Y-%m-%d %H:%M:%S"),
                     "tipo":            rd["tipo"],
                     "texto":           texto_combinado,
-                    "horas_estimadas": float(math.ceil(total_horas)),
+                    "horas_estimadas": float(total_ajustado),
                     "horas_reales":    float(horas_reales_d),
-                    "diferencia":      round(float(horas_reales_d) - math.ceil(total_horas), 2),
+                    "diferencia":      round(float(horas_reales_d) - total_ajustado, 2),
                     "top_ticket":      "",
                     "top_sim":         0,
                     "metodo":          rd["metodo"],
@@ -269,6 +304,15 @@ if st.session_state.resultado:
     m2.metric("📚 FAISS (similitud)", f"{res['faiss']:.1f} hrs")
     m3.metric("🤖 XGBoost (regresión)", f"{res.get('xgb', 0):.1f} hrs")
     m4.metric("📋 Catálogo", f"{res['catalogo']:.1f} hrs")
+
+    # Rango de confianza y match catálogo
+    rmin = res.get("rango_min", math.ceil(res["horas"]))
+    rmax = res.get("rango_max", math.ceil(res["horas"]))
+    cat_match = res.get("catalog_match", "")
+    info_parts = [f"**Rango probable:** {rmin}h — {rmax}h"]
+    if cat_match:
+        info_parts.append(f"**Mejor match catálogo:** _{cat_match}_")
+    st.info("  ·  ".join(info_parts))
 
     # Tabla de tickets similares
     st.subheader("Tickets Similares Encontrados")

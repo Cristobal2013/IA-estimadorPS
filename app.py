@@ -140,6 +140,7 @@ def _lazy_backend():
             load_labeled_dataframe,
             train_index_per_type,
             estimate_from_catalog,
+            estimate_from_catalog_with_match,
             predict_xgb,
         )
         return {
@@ -147,6 +148,7 @@ def _lazy_backend():
             "load_labeled_dataframe": load_labeled_dataframe,
             "train_index_per_type": train_index_per_type,
             "estimate_from_catalog": estimate_from_catalog,
+            "estimate_from_catalog_with_match": estimate_from_catalog_with_match,
             "predict_xgb": predict_xgb,
             "ok": True, "err": None
         }

@@ -501,12 +501,14 @@ class EmbeddingsFaissEstimator:
         return est, neigh
 
 # ---------- Orquestación de entrenamiento ----------
+MAX_HOURS = float(os.environ.get("MAX_HOURS", "500"))  # filtra outliers extremos
+
 def _build_from_frame(tag: str, df: pd.DataFrame) -> int:
     if df.empty:
         pd.DataFrame(columns=["text","hours","ticket","source"]).to_csv(_dataset_path(tag), index=False, encoding="utf-8")
         return 0
-    # Filtra tickets sin horas registradas — no aportan a la estimación
-    df = df[df["hours"].apply(lambda x: x is not None and not pd.isna(x) and float(x) > 0)].reset_index(drop=True)
+    # Filtra tickets sin horas registradas y outliers extremos
+    df = df[df["hours"].apply(lambda x: x is not None and not pd.isna(x) and 0 < float(x) <= MAX_HOURS)].reset_index(drop=True)
     if df.empty:
         pd.DataFrame(columns=["text","hours","ticket","source"]).to_csv(_dataset_path(tag), index=False, encoding="utf-8")
         return 0
@@ -554,15 +556,21 @@ def _tokens(s: str):
     return set([t for t in re.findall(r"[a-záéíóúñ]+", (s or "").lower()) if len(t) >= 3])
 
 def estimate_from_catalog(texto: str, tipo: str, top_n: int = 3, min_cover: float = 0.35) -> float:
+    hours, _ = estimate_from_catalog_with_match(texto, tipo, top_n, min_cover)
+    return hours
+
+def estimate_from_catalog_with_match(texto: str, tipo: str, top_n: int = 3, min_cover: float = 0.35):
     """
     Calcula horas desde catálogo con token overlap.
+    Devuelve (horas, nombre_mejor_match).
+    Usa promedio ponderado por cobertura (no suma) para evitar sobreestimación.
     """
     cat = load_catalog(tipo)
     if not cat:
-        return 0.0
+        return 0.0, ""
     qtoks = _tokens(texto)
     if not qtoks:
-        return 0.0
+        return 0.0, ""
 
     scored = []
     for key, h in cat:
@@ -576,6 +584,16 @@ def estimate_from_catalog(texto: str, tipo: str, top_n: int = 3, min_cover: floa
             if hnum > 0:
                 scored.append((cover, hnum, key))
 
+    if not scored:
+        return 0.0, ""
+
     scored.sort(key=lambda x: x[0], reverse=True)
-    total = sum(h for _, h, _ in scored[:max(1, int(top_n))])
-    return round(float(total), 2)
+    top = scored[:max(1, int(top_n))]
+
+    # Promedio ponderado por cobertura (no suma)
+    total_w = sum(c for c, _, _ in top)
+    if total_w == 0:
+        return 0.0, ""
+    weighted = sum(c * h for c, h, _ in top) / total_w
+    best_match = top[0][2]  # nombre del mejor match
+    return round(float(weighted), 2), best_match
