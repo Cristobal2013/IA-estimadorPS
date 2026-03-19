@@ -511,13 +511,17 @@ with tab_proy:
                 m = sub.iloc[:1]
             if not m.empty:
                 row = m.iloc[0]
+                _tc = int(round(float(row["tc"])))
+                _sc = int(round(float(row["sc"])))
+                _pm = int(round(float(row["pm"])))
                 filas_res.append({
                     "Origen":          "📦 Catálogo",
                     "Paquete / Tarea": f"{paq} · {esc}",
                     "Integración":     row["integracion"],
-                    "TC (h)":          int(round(float(row["tc"]))),
-                    "SC (h)":          int(round(float(row["sc"]))),
-                    "PM (h)":          int(round(float(row["pm"]))),
+                    "TC (h)":          _tc,
+                    "SC (h)":          _sc,
+                    "PM (h)":          _pm,
+                    "Total (h)":       _tc + _sc + _pm,
                     "Referencia IA":   "—",
                 })
 
@@ -541,13 +545,17 @@ with tab_proy:
                             # ── Detectar ajuste manual por rol (ej: "5h SC reuniones")
                             ajuste_manual = _parse_ajuste_rol(tarea)
                             if ajuste_manual:
+                                _tc_m = int(round(ajuste_manual["tc"]))
+                                _sc_m = int(round(ajuste_manual["sc"]))
+                                _pm_m = int(round(ajuste_manual["pm"]))
                                 filas_res.append({
                                     "Origen":          f"✏️ Manual ({ajuste_manual['rol']})",
                                     "Paquete / Tarea": tarea,
                                     "Integración":     tipo_t,
-                                    "TC (h)":          int(round(ajuste_manual["tc"])),
-                                    "SC (h)":          int(round(ajuste_manual["sc"])),
-                                    "PM (h)":          int(round(ajuste_manual["pm"])),
+                                    "TC (h)":          _tc_m,
+                                    "SC (h)":          _sc_m,
+                                    "PM (h)":          _pm_m,
+                                    "Total (h)":       _tc_m + _sc_m + _pm_m,
                                     "Referencia IA":   f"Ajuste directo {ajuste_manual['rol']}",
                                 })
                                 continue
@@ -557,11 +565,22 @@ with tab_proy:
                             r = _estimar_texto(tarea, tag_proy, metodo_proy, cx_extra, backend)
                             horas_ia = max(1, math.ceil(r["horas"]))
                             top1 = r["top"][0] if r["top"] else None
-                            ref = f"FAISS:{r['faiss']:.0f}h"
-                            if r["xgb"] > 0:
-                                ref += f" · XGB:{r['xgb']:.0f}h"
+
+                            # Confianza basada en similitud del ticket más cercano
+                            sim_val = top1["sim"] if top1 else 0
+                            if sim_val >= 0.80:
+                                confianza = "🟢 Alta"
+                            elif sim_val >= 0.60:
+                                confianza = "🟡 Media"
+                            else:
+                                confianza = "🔴 Baja"
+
+                            # Rango estimado
+                            rango = f"{r['rango_min']}-{r['rango_max']}h"
+
+                            ref = f"{confianza} · {rango}"
                             if top1:
-                                ref += f" · Ref:{top1['ticket']}({top1['sim']:.2f})"
+                                ref += f" · Ref:{top1['ticket']}"
 
                             # Distribución fija: la dificultad va a TC
                             tc_h = int(round(horas_ia * 0.75))
@@ -575,6 +594,7 @@ with tab_proy:
                                 "TC (h)":          tc_h,
                                 "SC (h)":          sc_h,
                                 "PM (h)":          pm_h,
+                                "Total (h)":       tc_h + sc_h + pm_h,
                                 "Referencia IA":   ref,
                             })
                 except Exception as e:
@@ -605,25 +625,29 @@ with tab_proy:
             df_res,
             column_config={
                 "TC (h)": st.column_config.NumberColumn(
-                    "👷 TC (h) ✏️", min_value=0, max_value=2000, step=0.5,
+                    "👷 TC (h) ✏️", min_value=0, max_value=2000, step=1,
                     help="Editable: ajusta horas de TC directamente",
                 ),
                 "SC (h)": st.column_config.NumberColumn(
-                    "💼 SC (h) ✏️", min_value=0, max_value=2000, step=0.5,
+                    "💼 SC (h) ✏️", min_value=0, max_value=2000, step=1,
                     help="Editable: ajusta horas de SC directamente",
                 ),
                 "PM (h)": st.column_config.NumberColumn(
-                    "📋 PM (h) ✏️", min_value=0, max_value=2000, step=0.5,
+                    "📋 PM (h) ✏️", min_value=0, max_value=2000, step=1,
                     help="Editable: ajusta horas de PM directamente",
                 ),
+                "Total (h)":     st.column_config.NumberColumn("🔢 Total", format="%d"),
                 "Origen":        st.column_config.TextColumn("Origen",      width="small"),
                 "Referencia IA": st.column_config.TextColumn("Ref. IA",     width="medium"),
                 "Integración":   st.column_config.TextColumn("Integración", width="small"),
             },
-            disabled=["Origen", "Paquete / Tarea", "Integración", "Referencia IA"],
+            disabled=["Origen", "Paquete / Tarea", "Integración", "Total (h)", "Referencia IA"],
             hide_index=True,
             use_container_width=True,
         )
+
+        # Columna Total calculada desde TC+SC+PM editados
+        edited["Total (h)"] = edited["TC (h)"] + edited["SC (h)"] + edited["PM (h)"]
 
         # ── Totales desde tabla editada
         total_tc    = edited["TC (h)"].sum()
@@ -677,13 +701,13 @@ with tab_proy:
                 "",
             ]
             for row_ed in edited.to_dict("records"):
-                tc_e = row_ed["TC (h)"]
-                sc_e = row_ed["SC (h)"]
-                pm_e = row_ed["PM (h)"]
+                tc_e = int(round(row_ed["TC (h)"]))
+                sc_e = int(round(row_ed["SC (h)"]))
+                pm_e = int(round(row_ed["PM (h)"]))
                 tot_e = tc_e + sc_e + pm_e
                 lines.append(
                     f"• {row_ed['Paquete / Tarea']}: "
-                    f"TC={tc_e:.1f}h | SC={sc_e:.1f}h | PM={pm_e:.1f}h | Total={tot_e:.1f}h"
+                    f"TC={tc_e}h | SC={sc_e}h | PM={pm_e}h | Total={tot_e}h"
                 )
             lines += [
                 "",
