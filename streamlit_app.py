@@ -352,6 +352,31 @@ with tab_proy:
     with h4:
         metodo_proy = st.selectbox("Método IA", ["faiss+xgb+catalog", "faiss+catalog", "faiss", "catalog"], key="met_proy")
 
+    # ── Fila 2: factores de estimación ───────────────
+    f1, f2, f3 = st.columns([2, 2, 3])
+    with f1:
+        tipo_cliente = st.radio(
+            "Tipo de cliente",
+            options=["Nuevo", "Existente"],
+            horizontal=True,
+            key="tipo_cliente",
+            help="Existente: ya tiene ambiente, certif. y configuración base → menos horas TC/SC/PM",
+        )
+    with f2:
+        tipo_trabajo = st.selectbox(
+            "Tipo de trabajo",
+            options=["Nuevo", "Actualización", "Modificación puntual"],
+            key="tipo_trabajo",
+            help="Actualización (~55% TC) · Modificación puntual (~30% TC)",
+        )
+    with f3:
+        num_dtes = st.number_input(
+            "N° tipos de DTE (FA, NC, Boleta, etc.)",
+            min_value=1, max_value=20, value=1, step=1,
+            key="num_dtes",
+            help="Solo afecta paquetes DTE-sensibles (Plantillas, PPL, Invoiceware): +7h TC por DTE extra",
+        )
+
     st.divider()
 
     col_sel, col_extra = st.columns([3, 2])
@@ -458,6 +483,32 @@ with tab_proy:
 
     # ── Cálculo ──────────────────────────────────────
     if btn_proy:
+        # ── Factores compuestos ──────────────────────────────
+        _MULT_CLIENTE = {
+            "Nuevo":     {"tc": 1.00, "sc": 1.00, "pm": 1.00},
+            "Existente": {"tc": 0.70, "sc": 0.75, "pm": 0.75},
+        }
+        _MULT_TRABAJO = {
+            "Nuevo":                {"tc": 1.00, "sc": 1.00, "pm": 1.00},
+            "Actualización":        {"tc": 0.55, "sc": 0.60, "pm": 0.70},
+            "Modificación puntual": {"tc": 0.30, "sc": 0.40, "pm": 0.60},
+        }
+        _mc = _MULT_CLIENTE.get(tipo_cliente, _MULT_CLIENTE["Nuevo"])
+        _mt = _MULT_TRABAJO.get(tipo_trabajo, _MULT_TRABAJO["Nuevo"])
+        _f_tc = _mc["tc"] * _mt["tc"]
+        _f_sc = _mc["sc"] * _mt["sc"]
+        _f_pm = _mc["pm"] * _mt["pm"]
+
+        # Paquetes DTE-sensibles y horas TC por DTE extra
+        _DTE_PKG = {
+            "Plantillas":          7,
+            "Invoiceware":         7,
+            "RES154 Invoiceware":  7,
+            "RES154 PPL":          5,
+            "Implem_Standard PPL": 5,
+        }
+        _dtes_extra = max(0, int(num_dtes) - 1)
+
         filas_res: list[dict] = []
 
         # 1) Componentes seleccionados del catálogo
@@ -471,15 +522,21 @@ with tab_proy:
                 m = sub.iloc[:1]
             if not m.empty:
                 row = m.iloc[0]
+                _tc_base = round(float(row["tc"]) * _f_tc, 1)
+                _sc_base = round(float(row["sc"]) * _f_sc, 1)
+                _pm_base = round(float(row["pm"]) * _f_pm, 1)
+                _tc_dte  = _DTE_PKG.get(paq, 0) * _dtes_extra
+                _tc_fin  = round(_tc_base + _tc_dte, 1)
+                _tot_fin = round(_tc_fin + _sc_base + _pm_base, 1)
                 filas_res.append({
                     "Origen":          "📦 Catálogo",
                     "Paquete / Tarea": f"{paq} · {esc}",
                     "Integración":     row["integracion"],
-                    "TC (h)":          float(row["tc"]),
-                    "SC (h)":          float(row["sc"]),
-                    "PM (h)":          float(row["pm"]),
-                    "Total (h)":       float(row["total"]),
-                    "Horas ajustadas": float(row["total"]),
+                    "TC (h)":          _tc_fin,
+                    "SC (h)":          _sc_base,
+                    "PM (h)":          _pm_base,
+                    "Total (h)":       _tot_fin,
+                    "Horas ajustadas": _tot_fin,
                     "Referencia IA":   "—",
                 })
 
@@ -555,6 +612,15 @@ with tab_proy:
                 "filas":       filas_res,
                 "nombre":      nombre_proy,
                 "integracion": integ_proy,
+                "factores": {
+                    "tipo_cliente":  tipo_cliente,
+                    "tipo_trabajo":  tipo_trabajo,
+                    "num_dtes":      int(num_dtes),
+                    "f_tc":          round(_f_tc, 3),
+                    "f_sc":          round(_f_sc, 3),
+                    "f_pm":          round(_f_pm, 3),
+                    "dtes_extra":    _dtes_extra,
+                },
             }
 
     # ── Resultados del proyecto ──────────────────────
@@ -566,6 +632,26 @@ with tab_proy:
         titulo_res = f"📊 Estimación: {rd['nombre']}" if rd["nombre"] else "📊 Estimación del Proyecto"
         st.subheader(titulo_res)
         st.caption(f"Integración base: **{rd['integracion']}**")
+
+        if rd.get("factores"):
+            fc = rd["factores"]
+            partes = [
+                f"👤 Cliente: **{fc['tipo_cliente']}**",
+                f"🔧 Trabajo: **{fc['tipo_trabajo']}**",
+                f"📄 DTEs: **{fc['num_dtes']}**",
+            ]
+            mods = []
+            if fc["f_tc"] != 1.0:
+                mods.append(f"TC×{fc['f_tc']:.2f}")
+            if fc["f_sc"] != 1.0:
+                mods.append(f"SC×{fc['f_sc']:.2f}")
+            if fc["f_pm"] != 1.0:
+                mods.append(f"PM×{fc['f_pm']:.2f}")
+            if fc["dtes_extra"] > 0:
+                mods.append(f"+{fc['dtes_extra']} DTE(s) extra en TC")
+            if mods:
+                partes.append(f"⚙️ Ajuste: {' | '.join(mods)}")
+            st.info("  ·  ".join(partes))
 
         df_res = pd.DataFrame(filas)
 
@@ -656,8 +742,20 @@ with tab_proy:
             lines = [
                 f"Estimación: {titulo_copia}",
                 f"Integración: {rd['integracion']}",
-                "",
             ]
+            if rd.get("factores"):
+                fc = rd["factores"]
+                lines.append(
+                    f"Factores: Cliente={fc['tipo_cliente']} | Trabajo={fc['tipo_trabajo']} | DTEs={fc['num_dtes']}"
+                )
+                mods = []
+                if fc["f_tc"] != 1.0: mods.append(f"TC×{fc['f_tc']:.2f}")
+                if fc["f_sc"] != 1.0: mods.append(f"SC×{fc['f_sc']:.2f}")
+                if fc["f_pm"] != 1.0: mods.append(f"PM×{fc['f_pm']:.2f}")
+                if fc["dtes_extra"] > 0: mods.append(f"+{fc['dtes_extra']} DTEs extra en TC")
+                if mods:
+                    lines.append(f"Multiplicadores: {' | '.join(mods)}")
+            lines.append("")
             for f in filas:
                 if f["Origen"] == "📦 Catálogo":
                     lines.append(
