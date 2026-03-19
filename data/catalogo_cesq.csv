@@ -1,12 +1,37 @@
-text,hours
-Para numero maximo de,2.0
-Para,100.0
-ePos agregar rut al filtro cada,3.0
-"Modificar filtro, agregar/modificar",5.0
-"Modificar filtro, agregar/modificar entre",5.0
-"Modificar filtro, agregar/modificar entre",10.0
-"Modificar filtro, agregar/modificar entre",20.0
-"Modificar filtro, agregar/modificar más de",40.0
-Customizar metodos Consult,1.0
-Crear nuevo WS Consult,3.0
-Crear nuevo WS Consult,5.0
+text,hours,categoria
+ePos agregar rut al filtro cada 3 a 5 ruts,4,filtro
+Filtro Extender nuevo Rut,8,filtro
+Modificar Plantilla PPL sin filtro por plantilla,10,plantilla
+Modificar lógica del filtro cambiar tipo de dato modificar campos respuesta agregar eliminar validaciones hacer configurable dato modificar salida SFTP,16,filtro
+Modificar filtro agregar modificar 5 o menos campos Factura Boleta NC ND,12,filtro
+Modificar filtro agregar modificar entre 5 y 10 campos Factura Boleta NC ND,24,filtro
+Modificar filtro agregar modificar entre 10 y 20 campos Factura Boleta NC ND,32,filtro
+Modificar filtro agregar modificar entre 20 y 40 campos Factura Boleta NC ND,40,filtro
+Modificar filtro agregar modificar más de 40 campos Factura Boleta NC ND,72,filtro
+Crear filtro Edifact desde cero,80,filtro
+Crear filtro XML texto plano desde cero,60,filtro
+Modificación de post-proceso userExit,16,post-proceso
+Crear post-proceso userExit desde cero,24,post-proceso
+Customizar metodos Consult 1 a 3 RUT,24,consult
+Crear nuevo WS Consult 3 a 5 RUT,32,consult
+Crear nuevo WS Consult 5 o mas RUT,56,consult
+Crear nuevo WSDL,56,wsdl
+Agregar información a reporte userExit factible si info está en base de datos,24,reporte
+Crear filtro full en filtro personalizado por tipo de DTE,12,filtro
+Creacion Reporte Extendido Peru estimacion cantidad de campos basico,40,reporte
+Modificar agentes de transporte,32,agentes
+Agregar nuevo tag a filtro,8,filtro
+Agregar nuevos tags a filtro personalizado,16,filtro
+Agregar campo nuevo a guia de despacho,16,filtro
+Agregar campos a guia de despacho,24,filtro
+Agregar tag a set de exportacion,8,filtro
+Modificar tag existente en filtro,12,filtro
+Crear filtro personalizado por tipo DTE desde cero,60,filtro
+Configurar nuevo tipo DTE en filtro,16,filtro
+Agregar validacion en filtro,16,filtro
+Modificar validacion existente en filtro,8,filtro
+Crear nuevo campo configurable en filtro,12,filtro
+Modificar respuesta WS Consult agregar campos,16,consult
+Modificar formato salida SFTP,16,filtro
+Crear reporte extendido basico,32,reporte
+Modificar reporte extendido existente,16,reporte
