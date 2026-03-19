@@ -279,6 +279,22 @@ def _save_proyecto(entry: dict):
     with open(_PROYECTOS_FILE, "w", encoding="utf-8") as f:
         json.dump(proyectos, f, ensure_ascii=False, indent=2)
 
+def _update_proyecto(idx: int, data: dict):
+    """Actualiza campos de un proyecto existente por índice."""
+    proyectos = _load_proyectos()
+    if 0 <= idx < len(proyectos):
+        proyectos[idx].update(data)
+        with open(_PROYECTOS_FILE, "w", encoding="utf-8") as f:
+            json.dump(proyectos, f, ensure_ascii=False, indent=2)
+
+def _delete_proyecto(idx: int):
+    """Elimina un proyecto por índice."""
+    proyectos = _load_proyectos()
+    if 0 <= idx < len(proyectos):
+        proyectos.pop(idx)
+        with open(_PROYECTOS_FILE, "w", encoding="utf-8") as f:
+            json.dump(proyectos, f, ensure_ascii=False, indent=2)
+
 
 # ══════════════════════════════════════════════════════
 # ANÁLISIS GEMINI DEL PROYECTO COMPLETO
@@ -718,10 +734,12 @@ with tab_proy:
 
         # Guardar estimación
         st.divider()
+        nota_save = st.text_input("Nota / detalle (opcional)", placeholder="Ej: cliente nuevo, solo emisión, go-live en abril...", key="nota_save_proy")
         if st.button("💾 Guardar Estimación", type="primary", key="btn_save_proy"):
             _save_proyecto({
                 "timestamp":   time.strftime("%Y-%m-%d %H:%M:%S"),
                 "nombre":      rd["nombre"],
+                "nota":        nota_save,
                 "integracion": rd["integracion"],
                 "componentes": [
                     {
@@ -889,21 +907,64 @@ with tab_historial:
     if not proyectos:
         st.info("Aún no hay proyectos guardados. Estima un proyecto y guárdalo desde el Tab 1.")
     else:
-        for p in reversed(proyectos):
-            label = f"**{p['nombre'] or 'Sin nombre'}** · {p['timestamp'][:10]} · {p['integracion']} · Total: {p['totales']['total_ajustado']}h"
+        for real_idx in range(len(proyectos) - 1, -1, -1):
+            p = proyectos[real_idx]
+            estado = p.get("estado", "estimado")
+            estado_icon = {"estimado": "📋", "corregido": "✅", "descartado": "❌"}.get(estado, "📋")
+            label = (
+                f"{estado_icon} **{p['nombre'] or 'Sin nombre'}** · "
+                f"{p['timestamp'][:10]} · {p['integracion']} · "
+                f"Total: {p['totales']['total_ajustado']}h"
+            )
+            if p.get("horas_reales"):
+                label += f" → Real: {p['horas_reales']}h"
+
             with st.expander(label):
-                if p.get("descripcion"):
-                    st.caption(p["descripcion"])
+                if p.get("nota"):
+                    st.caption(f"📝 {p['nota']}")
+
                 df_comp = pd.DataFrame(p["componentes"])
                 st.dataframe(df_comp, hide_index=True, use_container_width=True)
+
                 t = p["totales"]
                 st.markdown(
                     f"**Totales →** TC: {t['TC']}h &nbsp;|&nbsp; SC: {t['SC']}h &nbsp;|&nbsp; PM: {t['PM']}h"
                     f" &nbsp;|&nbsp; **Total ajustado: {t['total_ajustado']}h**",
                     unsafe_allow_html=True,
                 )
-                if p.get("comentarios"):
-                    st.caption(f"💬 {p['comentarios']}")
+
+                # ── Corregir estimación
+                st.markdown("---")
+                col_hr, col_nota, col_acciones = st.columns([2, 3, 2])
+                with col_hr:
+                    hr_real = st.number_input(
+                        "Horas reales", min_value=0, step=1,
+                        value=int(p.get("horas_reales", 0)),
+                        key=f"hr_real_{real_idx}",
+                    )
+                with col_nota:
+                    corr_nota = st.text_input(
+                        "Nota de corrección",
+                        value=p.get("correccion_nota", ""),
+                        placeholder="Ej: faltaron horas de testing...",
+                        key=f"corr_nota_{real_idx}",
+                    )
+                with col_acciones:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    bc1, bc2 = st.columns(2)
+                    with bc1:
+                        if st.button("✅ Corregir", key=f"corr_{real_idx}"):
+                            _update_proyecto(real_idx, {
+                                "estado":          "corregido",
+                                "horas_reales":    hr_real,
+                                "correccion_nota": corr_nota,
+                                "corregido_en":    time.strftime("%Y-%m-%d %H:%M:%S"),
+                            })
+                            st.rerun()
+                    with bc2:
+                        if st.button("🗑️ Eliminar", key=f"del_{real_idx}"):
+                            _delete_proyecto(real_idx)
+                            st.rerun()
 
         # Descarga JSON
         st.divider()
