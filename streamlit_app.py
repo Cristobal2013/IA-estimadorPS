@@ -306,119 +306,108 @@ tab_proy, tab_libre, tab_historial = st.tabs([
 # ══════════════════════════════════════════════════════
 with tab_proy:
 
-    # ── Encabezado del proyecto ──────────────────────
-    st.subheader("1️⃣ Datos del Proyecto")
-    c1, c2, c3 = st.columns([4, 1, 1])
-    with c1:
+    # ── Encabezado ───────────────────────────────────
+    h1, h2, h3, h4 = st.columns([4, 1, 1, 1])
+    with h1:
         nombre_proy = st.text_input(
-            "Nombre del proyecto / Ticket",
-            placeholder="Ej: PSTC-1234 · Cliente ABC",
-            key="nombre_proy",
+            "Proyecto / Ticket", placeholder="Ej: PSTC-1234 · Cliente ABC", key="nombre_proy"
         )
-    with c2:
-        integ_proy = st.selectbox(
-            "Integración base",
-            ["Full ASP", "Mixto", "On Premise", "Estandar"],
-            key="integ_proy",
-        )
-    with c3:
-        cx_extra = st.select_slider(
-            "Complejidad extra",
-            options=["baja", "media", "alta"],
-            value="media",
-            key="cx_proy",
-        )
-    st.caption("💡 Los paquetes del catálogo son siempre **Implementación**. Cada tarea adicional puede ser Desarrollo o Implementación.")
+    with h2:
+        integ_proy = st.selectbox("Integración", ["Full ASP", "Mixto", "On Premise", "Estandar"], key="integ_proy")
+    with h3:
+        cx_extra = st.select_slider("Complejidad", options=["baja", "media", "alta"], value="media", key="cx_proy")
+    with h4:
+        metodo_proy = st.selectbox("Método IA", ["faiss+xgb+catalog", "faiss+catalog", "faiss", "catalog"], key="met_proy")
 
     st.divider()
 
-    # ── Sección paquetes + tareas ────────────────────
-    col_paq, col_extra = st.columns([3, 2])
+    col_sel, col_extra = st.columns([3, 2])
 
-    # ── Paquetes del catálogo
-    with col_paq:
-        st.subheader("2️⃣ Paquetes del Catálogo")
+    # ── SELECCIÓN FLAT — un solo multiselect con todos los componentes
+    with col_sel:
+        st.subheader("📦 Componentes del Proyecto")
+        st.caption("Busca por nombre, tecnología o normativa. Puedes combinar libremente.")
 
         if df_roles.empty:
             st.warning("No se encontró catalogo_roles.csv en data/")
+            componentes_sel = []
         else:
-            paquetes_disp = sorted(df_roles["paquete"].unique())
-            paquetes_sel = st.multiselect(
-                "Selecciona los paquetes del proyecto",
-                options=paquetes_disp,
-                placeholder="Busca o selecciona: Plantillas, PPL, Coapi...",
-                key="paquetes_sel",
+            # Construir opciones: "PAQUETE · ESCENARIO" únicas
+            opciones: list[str] = []
+            seen_opts: set = set()
+            for _, row in df_roles.iterrows():
+                opt = f"{row['paquete']} · {row['escenario']}"
+                if opt not in seen_opts:
+                    seen_opts.add(opt)
+                    opciones.append(opt)
+
+            componentes_sel = st.multiselect(
+                "Selecciona los componentes",
+                options=opciones,
+                placeholder="Busca: Plantillas, PPL, Coapi, RES154 PPL...",
+                key="componentes_sel",
             )
 
-            # Guarda qué escenarios están checked
-            escenarios_check: dict = {}
-
-            for paq in paquetes_sel:
-                subset = df_roles[df_roles["paquete"] == paq]
-                integ_disp = list(subset["integracion"].unique())
-
-                # Elegir integración más apropiada para este paquete
-                if integ_proy in integ_disp:
-                    integ_use = integ_proy
-                elif "Estandar" in integ_disp:
-                    integ_use = "Estandar"
-                else:
-                    integ_use = integ_disp[0]
-
-                subset_integ = subset[subset["integracion"] == integ_use]
-
-                with st.expander(f"**{paq}** · {integ_use}", expanded=True):
-                    for _, row in subset_integ.iterrows():
-                        esc = row["escenario"]
-                        label = (
-                            f"{esc}  —  "
-                            f"TC: **{row['tc']}h** · SC: **{row['sc']}h** · "
-                            f"PM: **{row['pm']}h**  →  Total: **{row['total']}h**"
-                        )
-                        checked = st.checkbox(label, key=f"chk_{paq}_{esc}")
-                        escenarios_check[(paq, esc, integ_use)] = (checked, row)
+            # Preview en tiempo real de lo seleccionado
+            if componentes_sel:
+                prev = []
+                for opt in componentes_sel:
+                    paq, esc = opt.split(" · ", 1)
+                    sub = df_roles[(df_roles["paquete"] == paq) & (df_roles["escenario"] == esc)]
+                    m = sub[sub["integracion"] == integ_proy]
+                    if m.empty:
+                        m = sub[sub["integracion"] == "Estandar"]
+                    if m.empty and not sub.empty:
+                        m = sub.iloc[:1]
+                    if not m.empty:
+                        r = m.iloc[0]
+                        prev.append({
+                            "Componente": opt,
+                            "Integración": r["integracion"],
+                            "TC": r["tc"], "SC": r["sc"], "PM": r["pm"], "Total": r["total"],
+                        })
+                if prev:
+                    st.dataframe(
+                        pd.DataFrame(prev),
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "TC": st.column_config.NumberColumn("TC (h)", format="%.1f"),
+                            "SC": st.column_config.NumberColumn("SC (h)", format="%.1f"),
+                            "PM": st.column_config.NumberColumn("PM (h)", format="%.1f"),
+                            "Total": st.column_config.NumberColumn("Total (h)", format="%.1f"),
+                        },
+                    )
 
     # ── Tareas adicionales (IA)
     with col_extra:
-        st.subheader("3️⃣ Tareas Adicionales (IA)")
-        st.caption(
-            "Para actividades no contempladas en el catálogo. "
-            "La IA estima las horas basándose en tickets históricos."
-        )
+        st.subheader("✍️ Tareas Adicionales (IA)")
+        st.caption("Para actividades no en el catálogo. La IA estima con tickets históricos.")
 
         tareas_ed = []
         for i, t in enumerate(st.session_state.tareas_extra):
-            # Soporte tanto dict nuevo como string legacy
             if isinstance(t, dict):
                 t_texto = t.get("texto", "")
                 t_tipo  = t.get("tipo", "Implementación")
             else:
-                t_texto = t
-                t_tipo  = "Implementación"
+                t_texto, t_tipo = t, "Implementación"
 
             ct, ctipo, cd = st.columns([4, 2, 1])
             with ct:
                 val = st.text_input(
-                    f"Tarea {i + 1}",
-                    value=t_texto,
-                    key=f"textra_{i}",
-                    placeholder="Ej: Soporte post go-live, dev especial...",
+                    f"t{i}", value=t_texto, key=f"textra_{i}",
+                    placeholder="Ej: Soporte post go-live...",
                     label_visibility="collapsed",
                 )
             with ctipo:
                 tipo_t = st.selectbox(
-                    "Tipo",
-                    ["Implementación", "Desarrollo"],
+                    "ti", ["Implementación", "Desarrollo"],
                     index=0 if t_tipo == "Implementación" else 1,
-                    key=f"ttipo_{i}",
-                    label_visibility="collapsed",
+                    key=f"ttipo_{i}", label_visibility="collapsed",
                 )
             with cd:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if (
-                    st.button("✕", key=f"del_extra_{i}", help="Eliminar")
-                    and len(st.session_state.tareas_extra) > 1
-                ):
+                if st.button("✕", key=f"del_extra_{i}") and len(st.session_state.tareas_extra) > 1:
                     st.session_state.tareas_extra.pop(i)
                     st.rerun()
             tareas_ed.append({"texto": val, "tipo": tipo_t})
@@ -428,40 +417,38 @@ with tab_proy:
             st.session_state.tareas_extra.append({"texto": "", "tipo": "Implementación"})
             st.rerun()
 
-        st.markdown("---")
-        metodo_proy = st.selectbox(
-            "Método IA",
-            ["faiss+xgb+catalog", "faiss+catalog", "faiss", "catalog"],
-            key="met_proy",
-        )
-
     # ── Botón estimar ────────────────────────────────
     st.divider()
     _, col_btn = st.columns([4, 1])
     with col_btn:
-        btn_proy = st.button(
-            "🚀 Estimar Proyecto", type="primary", use_container_width=True, key="btn_proy"
-        )
+        btn_proy = st.button("🚀 Estimar Proyecto", type="primary", use_container_width=True, key="btn_proy")
 
     # ── Cálculo ──────────────────────────────────────
     if btn_proy:
         filas_res: list[dict] = []
 
-        # 1) Paquetes seleccionados del catálogo
-        for (paq, esc, integ_use), (checked, row) in escenarios_check.items():
-            if not checked:
-                continue
-            filas_res.append({
-                "Origen":          "📦 Catálogo",
-                "Paquete / Tarea": f"{paq} · {esc}",
-                "Integración":     integ_use,
-                "TC (h)":          float(row["tc"]),
-                "SC (h)":          float(row["sc"]),
-                "PM (h)":          float(row["pm"]),
-                "Total (h)":       float(row["total"]),
-                "Horas ajustadas": float(row["total"]),
-                "Referencia IA":   "—",
-            })
+        # 1) Componentes seleccionados del catálogo
+        for opt in (componentes_sel if not df_roles.empty else []):
+            paq, esc = opt.split(" · ", 1)
+            sub = df_roles[(df_roles["paquete"] == paq) & (df_roles["escenario"] == esc)]
+            m = sub[sub["integracion"] == integ_proy]
+            if m.empty:
+                m = sub[sub["integracion"] == "Estandar"]
+            if m.empty and not sub.empty:
+                m = sub.iloc[:1]
+            if not m.empty:
+                row = m.iloc[0]
+                filas_res.append({
+                    "Origen":          "📦 Catálogo",
+                    "Paquete / Tarea": f"{paq} · {esc}",
+                    "Integración":     row["integracion"],
+                    "TC (h)":          float(row["tc"]),
+                    "SC (h)":          float(row["sc"]),
+                    "PM (h)":          float(row["pm"]),
+                    "Total (h)":       float(row["total"]),
+                    "Horas ajustadas": float(row["total"]),
+                    "Referencia IA":   "—",
+                })
 
         # 2) Tareas adicionales → IA
         tareas_validas = [
