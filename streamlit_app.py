@@ -718,39 +718,31 @@ with tab_proy:
 
         # Guardar estimación
         st.divider()
-        with st.form("form_proy_save"):
-            st.subheader("💾 Guardar Estimación")
-            nombre_save = st.text_input("Nombre del proyecto", value=rd["nombre"] or "")
-            desc_save   = st.text_area("Descripción / Alcance", height=80,
-                placeholder="Ej: Cliente nuevo, DTE emisión y recepción, incluye go-live...")
-            com_save    = st.text_input("Comentarios internos")
-            if st.form_submit_button("💾 Guardar", type="primary"):
-                _save_proyecto({
-                    "timestamp":   time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "nombre":      nombre_save,
-                    "descripcion": desc_save,
-                    "integracion": rd["integracion"],
-                    "componentes": [
-                        {
-                            "origen": row["Origen"],
-                            "tarea":  row["Paquete / Tarea"],
-                            "TC":     int(row["TC (h)"]),
-                            "SC":     int(row["SC (h)"]),
-                            "PM":     int(row["PM (h)"]),
-                            "total":  int(row["TC (h)"]) + int(row["SC (h)"]) + int(row["PM (h)"]),
-                        }
-                        for row in edited.to_dict("records")
-                    ],
-                    "totales": {
-                        "TC":             _r(total_tc),
-                        "SC":             _r(total_sc),
-                        "PM":             _r(total_pm),
-                        "total_bruto":    _r(total_bruto),
-                        "total_ajustado": _r(ajuste["total_ajustado"]),
-                    },
-                    "comentarios": com_save,
-                })
-                st.success("✅ Proyecto guardado.")
+        if st.button("💾 Guardar Estimación", type="primary", key="btn_save_proy"):
+            _save_proyecto({
+                "timestamp":   time.strftime("%Y-%m-%d %H:%M:%S"),
+                "nombre":      rd["nombre"],
+                "integracion": rd["integracion"],
+                "componentes": [
+                    {
+                        "origen": row["Origen"],
+                        "tarea":  row["Paquete / Tarea"],
+                        "TC":     int(round(row["TC (h)"])),
+                        "SC":     int(round(row["SC (h)"])),
+                        "PM":     int(round(row["PM (h)"])),
+                        "total":  int(round(row["TC (h)"])) + int(round(row["SC (h)"])) + int(round(row["PM (h)"])),
+                    }
+                    for row in edited.to_dict("records")
+                ],
+                "totales": {
+                    "TC":             _r(total_tc),
+                    "SC":             _r(total_sc),
+                    "PM":             _r(total_pm),
+                    "total_bruto":    _r(total_bruto),
+                    "total_ajustado": _r(ajuste["total_ajustado"]),
+                },
+            })
+            st.success("✅ Proyecto guardado con desglose TC/SC/PM.")
 
 
 # ══════════════════════════════════════════════════════
