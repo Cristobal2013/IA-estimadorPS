@@ -108,6 +108,74 @@ def _estimar_texto(texto, tag, metodo, complexity, backend):
 
 
 # ══════════════════════════════════════════════════════
+# DISTRIBUCIÓN TC/SC/PM PARA TAREAS IA
+# ══════════════════════════════════════════════════════
+def _get_role_ratios(texto: str, df_roles: pd.DataFrame, integ_pref: str):
+    """Busca el paquete más similar y retorna proporciones (tc_r, sc_r, pm_r, nombre_match)."""
+    import unicodedata, re
+
+    if df_roles.empty or not texto.strip():
+        return 1.0, 0.0, 0.0, ""
+
+    def _norm(s):
+        s = unicodedata.normalize("NFD", str(s))
+        s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+        return re.sub(r"[^a-z0-9\s]", " ", s.lower())
+
+    STOP = {"de", "la", "el", "en", "y", "a", "con", "por", "para", "del",
+            "los", "las", "un", "una", "se", "su", "que", "es", "al", "lo"}
+
+    def tokenize(s):
+        return set(_norm(s).split()) - STOP
+
+    query = tokenize(texto)
+    if not query:
+        return 1.0, 0.0, 0.0, ""
+
+    best_score = 0.0
+    best_row = None
+    best_name = ""
+    seen: set = set()
+
+    for _, row in df_roles.iterrows():
+        key = (row["paquete"], row["escenario"])
+        if key in seen:
+            continue
+        seen.add(key)
+
+        pkg_tokens = tokenize(f"{row['paquete']} {row['escenario']}")
+        if not pkg_tokens:
+            continue
+
+        inter = query & pkg_tokens
+        score = len(inter) / max(len(query), len(pkg_tokens))
+
+        if score > best_score:
+            best_score = score
+            # Obtener fila con la integración preferida
+            sub = df_roles[(df_roles["paquete"] == row["paquete"]) & (df_roles["escenario"] == row["escenario"])]
+            m = sub[sub["integracion"] == integ_pref]
+            if m.empty:
+                m = sub[sub["integracion"] == "Estandar"]
+            if m.empty:
+                m = sub.iloc[:1]
+            if not m.empty:
+                best_row = m.iloc[0]
+                best_name = f"{row['paquete']} · {row['escenario']}"
+
+    if best_row is None or float(best_row["total"]) == 0:
+        return 1.0, 0.0, 0.0, ""
+
+    total = float(best_row["total"])
+    return (
+        float(best_row["tc"]) / total,
+        float(best_row["sc"]) / total,
+        float(best_row["pm"]) / total,
+        best_name,
+    )
+
+
+# ══════════════════════════════════════════════════════
 # ESTADO DE SESIÓN
 # ══════════════════════════════════════════════════════
 for _k, _v in {
@@ -297,13 +365,22 @@ with tab_proy:
                                 ref += f" · XGB:{r['xgb']:.0f}h"
                             if top1:
                                 ref += f" · Ref:{top1['ticket']}({top1['sim']:.2f})"
+
+                            # Distribuir horas por rol según paquete más similar
+                            tc_r, sc_r, pm_r, matched = _get_role_ratios(tarea, df_roles, integ_proy)
+                            tc_h = round(horas_ia * tc_r, 1)
+                            sc_h = round(horas_ia * sc_r, 1)
+                            pm_h = round(horas_ia * pm_r, 1)
+                            if matched:
+                                ref += f" · Roles≈{matched}"
+
                             filas_res.append({
                                 "Origen":          "🤖 IA",
                                 "Paquete / Tarea": tarea,
                                 "Integración":     tipo_proy,
-                                "TC (h)":          horas_ia,
-                                "SC (h)":          0.0,
-                                "PM (h)":          0.0,
+                                "TC (h)":          tc_h,
+                                "SC (h)":          sc_h,
+                                "PM (h)":          pm_h,
                                 "Total (h)":       float(horas_ia),
                                 "Horas ajustadas": float(horas_ia),
                                 "Referencia IA":   ref,
