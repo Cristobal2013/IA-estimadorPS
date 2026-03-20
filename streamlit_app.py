@@ -926,12 +926,30 @@ with tab_historial:
                     st.caption(f"📝 {p['nota']}")
 
                 df_comp = pd.DataFrame(p["componentes"])
-                st.dataframe(df_comp, hide_index=True, use_container_width=True)
 
-                t = p["totales"]
+                # Tabla editable por rol
+                edited_comp = st.data_editor(
+                    df_comp,
+                    column_config={
+                        "TC":    st.column_config.NumberColumn("👷 TC (h)", min_value=0, step=1),
+                        "SC":    st.column_config.NumberColumn("💼 SC (h)", min_value=0, step=1),
+                        "PM":    st.column_config.NumberColumn("📋 PM (h)", min_value=0, step=1),
+                        "total": st.column_config.NumberColumn("🔢 Total",  format="%d"),
+                    },
+                    disabled=["origen", "tarea", "total"],
+                    hide_index=True,
+                    use_container_width=True,
+                    key=f"comp_editor_{real_idx}",
+                )
+
+                # Totales recalculados desde la tabla editada
+                tc_sum = int(edited_comp["TC"].sum())
+                sc_sum = int(edited_comp["SC"].sum())
+                pm_sum = int(edited_comp["PM"].sum())
+                tot_sum = tc_sum + sc_sum + pm_sum
                 st.markdown(
-                    f"**Totales →** TC: {t['TC']}h &nbsp;|&nbsp; SC: {t['SC']}h &nbsp;|&nbsp; PM: {t['PM']}h"
-                    f" &nbsp;|&nbsp; **Total ajustado: {t['total_ajustado']}h**",
+                    f"**Totales →** TC: {tc_sum}h &nbsp;|&nbsp; SC: {sc_sum}h &nbsp;|&nbsp; PM: {pm_sum}h"
+                    f" &nbsp;|&nbsp; **Total: {tot_sum}h**",
                     unsafe_allow_html=True,
                 )
 
@@ -940,7 +958,7 @@ with tab_historial:
                 col_hr, col_nota, col_acciones = st.columns([2, 3, 2])
                 with col_hr:
                     hr_real = st.number_input(
-                        "Horas reales", min_value=0, step=1,
+                        "Horas reales totales", min_value=0, step=1,
                         value=int(p.get("horas_reales", 0)),
                         key=f"hr_real_{real_idx}",
                     )
@@ -956,11 +974,22 @@ with tab_historial:
                     bc1, bc2 = st.columns(2)
                     with bc1:
                         if st.button("✅ Corregir", key=f"corr_{real_idx}"):
+                            comp_corregidos = edited_comp.to_dict("records")
+                            for row in comp_corregidos:
+                                row["total"] = int(row["TC"]) + int(row["SC"]) + int(row["PM"])
                             _update_proyecto(real_idx, {
                                 "estado":          "corregido",
                                 "horas_reales":    hr_real,
                                 "correccion_nota": corr_nota,
                                 "corregido_en":    time.strftime("%Y-%m-%d %H:%M:%S"),
+                                "componentes":     comp_corregidos,
+                                "totales": {
+                                    "TC":             tc_sum,
+                                    "SC":             sc_sum,
+                                    "PM":             pm_sum,
+                                    "total_bruto":    tot_sum,
+                                    "total_ajustado": tot_sum,
+                                },
                             })
                             st.rerun()
                     with bc2:
