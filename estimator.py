@@ -63,6 +63,19 @@ CATALOGO_CESQ  = DATA_DIR / "catalogo_cesq.csv"
 CATALOGO_PSTC  = DATA_DIR / "catalogo_pstc.csv"
 NEW_EST_CSV    = DATA_DIR / "estimaciones_nuevas.csv"
 
+def _get_table_df(table_name: str, csv_fallback: Path) -> pd.DataFrame:
+    """Lee desde SQLite. Si no existe la tabla, cae al CSV."""
+    try:
+        from db import get_table
+        df = get_table(table_name)
+        if not df.empty:
+            return df
+    except Exception:
+        pass
+    if csv_fallback.exists():
+        return _read_csv_smart(csv_fallback)
+    return pd.DataFrame()
+
 
 MODEL_NAME   = os.environ.get("EMB_MODEL", "sentence-transformers/all-mpnet-base-v2")
 MAX_SEQ_LEN  = int(os.environ.get("MAX_SEQ_LEN", "384"))
@@ -350,10 +363,12 @@ def load_catalog(tipo: str):
     """
     Devuelve lista de (texto, horas) para 'Desarrollo' o 'Implementación'.
     """
-    fname = CATALOGO_CESQ if tipo.lower().startswith("des") else CATALOGO_PSTC
-    if not fname.exists():
+    es_des = tipo.lower().startswith("des")
+    cat_table = "catalogo_cesq" if es_des else "catalogo_pstc"
+    cat_csv   = CATALOGO_CESQ   if es_des else CATALOGO_PSTC
+    df = _get_table_df(cat_table, cat_csv)
+    if df.empty:
         return []
-    df = _read_csv_smart(fname)
     tcol = _guess_col(df, _TEXT_HINTS) or df.columns[0]
     hcol = _guess_col(df, _HOURS_HINTS) or (df.columns[1] if len(df.columns)>1 else None)
     rows = []
@@ -374,19 +389,21 @@ def load_labeled_dataframe(tag: str) -> pd.DataFrame:
     assert tag in ("desarrollo","implementacion")
     frames = []
 
-    # 1) Histórico (Jira export)
-    hist_path = DATA_DIR / ("EstimacionCESQ.csv" if tag == "desarrollo" else "EstimacionesPSTC.csv")
-    if hist_path.exists():
-        dfh = _read_csv_smart(hist_path)
+    # 1) Histórico (SQLite con fallback a CSV)
+    hist_table = "historico_cesq" if tag == "desarrollo" else "historico_pstc"
+    hist_csv   = DATA_DIR / ("EstimacionCESQ.csv" if tag == "desarrollo" else "EstimacionesPSTC.csv")
+    dfh = _get_table_df(hist_table, hist_csv)
+    if not dfh.empty:
         tcol = _guess_col(dfh, _TEXT_HINTS) or dfh.columns[0]
         hcol = _guess_col(dfh, _HOURS_HINTS)
         kcol = _guess_col(dfh, _TICKET_HINTS)
         frames.append(_make_rows(dfh, tcol, hcol, kcol, source="historic"))
 
-    # 2) Catálogo base
-    cat_path = CATALOGO_CESQ if tag == "desarrollo" else CATALOGO_PSTC
-    if cat_path.exists():
-        dfc = _read_csv_smart(cat_path)
+    # 2) Catálogo base (SQLite con fallback a CSV)
+    cat_table = "catalogo_cesq" if tag == "desarrollo" else "catalogo_pstc"
+    cat_csv   = CATALOGO_CESQ if tag == "desarrollo" else CATALOGO_PSTC
+    dfc = _get_table_df(cat_table, cat_csv)
+    if not dfc.empty:
         tcol = _guess_col(dfc, _TEXT_HINTS) or dfc.columns[0]
         hcol = _guess_col(dfc, _HOURS_HINTS) or (dfc.columns[1] if len(dfc.columns)>1 else None)
         frames.append(_make_rows(dfc, tcol, hcol, None, source="catalog"))

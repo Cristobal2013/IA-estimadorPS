@@ -5,6 +5,9 @@ import time
 import math
 
 from app import _lazy_backend, _resolve_tag, _to_float, append_row_safe
+from db import get_table, save_table, init_db
+
+init_db()  # migra CSVs a SQLite si es la primera vez
 
 st.set_page_config(
     page_title="Estimador PS · Sovos",
@@ -15,12 +18,10 @@ st.set_page_config(
 # ══════════════════════════════════════════════════════
 # DATOS
 # ══════════════════════════════════════════════════════
-@st.cache_data
+@st.cache_data(ttl=60)
 def _load_roles():
-    p = os.path.join(os.path.dirname(__file__), "data", "catalogo_roles.csv")
-    if not os.path.exists(p):
-        return pd.DataFrame()
-    return pd.read_csv(p)
+    df = get_table("catalogo_roles")
+    return df if not df.empty else pd.DataFrame()
 
 
 # ══════════════════════════════════════════════════════
@@ -366,10 +367,11 @@ df_roles = _load_roles()
 # ══════════════════════════════════════════════════════
 st.title("🤖 Estimador de Esfuerzo PS · Sovos")
 
-tab_proy, tab_libre, tab_historial = st.tabs([
+tab_proy, tab_libre, tab_historial, tab_catalogo = st.tabs([
     "📋 Estimador de Proyecto",
     "📝 Consulta Rápida",
     "📊 Historial y Precisión",
+    "📚 Catálogo",
 ])
 
 
@@ -989,3 +991,52 @@ with tab_historial:
                         file_name="estimaciones_nuevas.csv",
                         mime="text/csv",
                     )
+
+
+# ══════════════════════════════════════════════════════
+# TAB 4 — CATÁLOGO
+# ══════════════════════════════════════════════════════
+with tab_catalogo:
+    st.subheader("📚 Editor de Catálogos")
+    st.caption("Edita directamente los datos que usa el estimador. Los cambios se guardan en la base de datos.")
+
+    _TABLAS_CATALOGO = {
+        "Roles por Paquete":       ("catalogo_roles",  "Horas TC/SC/PM por paquete, escenario e integración"),
+        "Tareas PSTC":             ("catalogo_pstc",   "Tareas unitarias de implementación con horas y categoría"),
+        "Tareas CESQ":             ("catalogo_cesq",   "Tareas unitarias de desarrollo con horas y categoría"),
+        "Histórico PSTC (FAISS)":  ("historico_pstc",  "Tickets históricos usados para entrenar el modelo de implementación"),
+        "Histórico CESQ (FAISS)":  ("historico_cesq",  "Tickets históricos usados para entrenar el modelo de desarrollo"),
+    }
+
+    tabla_sel = st.selectbox(
+        "Selecciona un catálogo",
+        options=list(_TABLAS_CATALOGO.keys()),
+        key="cat_sel",
+    )
+
+    tabla_db, tabla_desc = _TABLAS_CATALOGO[tabla_sel]
+    st.caption(tabla_desc)
+
+    df_cat = get_table(tabla_db)
+
+    if df_cat.empty:
+        st.warning(f"La tabla '{tabla_db}' está vacía o no existe.")
+    else:
+        st.caption(f"**{len(df_cat)} registros** · Edita las celdas y presiona Guardar.")
+
+        edited_cat = st.data_editor(
+            df_cat,
+            num_rows="dynamic",
+            hide_index=True,
+            use_container_width=True,
+            key=f"editor_{tabla_db}",
+        )
+
+        col_s, col_r = st.columns([1, 5])
+        with col_s:
+            if st.button("💾 Guardar cambios", type="primary", key=f"save_{tabla_db}"):
+                save_table(tabla_db, edited_cat)
+                st.cache_data.clear()
+                st.success(f"✅ '{tabla_sel}' guardado — {len(edited_cat)} registros.")
+        with col_r:
+            st.caption("⚠️ Los cambios en Histórico PSTC/CESQ requieren re-entrenar el índice FAISS para tener efecto en las estimaciones IA.")
