@@ -16,6 +16,199 @@ st.set_page_config(
 )
 
 # ══════════════════════════════════════════════════════
+# CSS GLOBAL — DM Sans, color palette, components
+# ══════════════════════════════════════════════════════
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap');
+
+html, body, [class*="css"] {
+    font-family: 'DM Sans', sans-serif !important;
+}
+
+/* ── App background ──────────────────────────────────── */
+.stApp { background-color: #F1F5F9; }
+.stApp > header { background-color: transparent !important; }
+section[data-testid="stSidebar"] { background: #1E293B; }
+
+/* ── Main title ──────────────────────────────────────── */
+h1 {
+    background: #1E293B;
+    color: white !important;
+    font-weight: 700 !important;
+    font-size: 1.45rem !important;
+    letter-spacing: -0.01em !important;
+    padding: 14px 22px !important;
+    border-radius: 10px !important;
+    margin-bottom: 0 !important;
+}
+
+/* ── Tabs ────────────────────────────────────────────── */
+.stTabs [data-baseweb="tab-list"] {
+    background-color: #1E293B;
+    border-radius: 8px;
+    padding: 5px 8px;
+    gap: 3px;
+    margin-top: 4px;
+}
+.stTabs [data-baseweb="tab"] {
+    color: #94A3B8 !important;
+    font-weight: 500;
+    font-size: 0.88rem;
+    border-radius: 6px;
+    padding: 8px 18px;
+    transition: all 0.15s;
+}
+.stTabs [data-baseweb="tab"][aria-selected="true"] {
+    background-color: #3B82F6 !important;
+    color: white !important;
+    font-weight: 600 !important;
+}
+.stTabs [data-baseweb="tab-highlight"],
+.stTabs [data-baseweb="tab-border"] { display: none !important; }
+
+/* ── Primary buttons ─────────────────────────────────── */
+div.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, #3B82F6, #2563EB) !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    font-size: 0.88rem !important;
+    color: white !important;
+    padding: 0.5rem 1.4rem !important;
+    box-shadow: 0 2px 6px rgba(59,130,246,0.35) !important;
+    transition: all 0.15s !important;
+}
+div.stButton > button[kind="primary"]:hover {
+    background: linear-gradient(135deg, #2563EB, #1D4ED8) !important;
+    box-shadow: 0 4px 12px rgba(59,130,246,0.45) !important;
+    transform: translateY(-1px);
+}
+div.stButton > button[kind="secondary"] {
+    border-radius: 8px !important;
+    font-weight: 500 !important;
+}
+
+/* ── Expanders ───────────────────────────────────────── */
+details[data-testid="stExpander"] > summary {
+    background: white !important;
+    border: 1px solid #E2E8F0 !important;
+    border-radius: 8px !important;
+    font-weight: 500 !important;
+    padding: 12px 16px !important;
+}
+details[data-testid="stExpander"][open] > summary {
+    border-radius: 8px 8px 0 0 !important;
+    border-bottom-color: transparent !important;
+}
+details[data-testid="stExpander"] > div[data-testid="stExpanderDetails"] {
+    background: white !important;
+    border: 1px solid #E2E8F0 !important;
+    border-top: none !important;
+    border-radius: 0 0 8px 8px !important;
+}
+
+/* ── DataFrames / data_editor ────────────────────────── */
+[data-testid="stDataFrame"], iframe[title="st_aggrid"] {
+    border-radius: 8px !important;
+    border: 1px solid #E2E8F0 !important;
+    overflow: hidden !important;
+}
+
+/* ── Metric cards ────────────────────────────────────── */
+[data-testid="metric-container"] {
+    background: white;
+    border: 1px solid #E2E8F0;
+    border-radius: 10px;
+    padding: 14px 16px;
+}
+
+/* ── HR dividers ─────────────────────────────────────── */
+hr { border-color: #E2E8F0 !important; margin: 18px 0 !important; }
+
+/* ── Role total cards ────────────────────────────────── */
+.rol-cards {
+    display: flex;
+    gap: 14px;
+    margin: 18px 0 10px 0;
+}
+.rol-card {
+    flex: 1;
+    border-radius: 12px;
+    padding: 18px 16px 14px;
+    text-align: center;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.07);
+}
+.rol-card .lbl {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-bottom: 6px;
+}
+.rol-card .val {
+    font-size: 2.1rem;
+    font-weight: 700;
+    line-height: 1;
+    font-family: 'DM Mono', monospace;
+}
+.rol-card .unit {
+    font-size: 0.82rem;
+    font-weight: 500;
+    margin-top: 4px;
+    opacity: 0.6;
+}
+.card-tc  { background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE; }
+.card-sc  { background:#F0FDF4; color:#15803D; border:1px solid #BBF7D0; }
+.card-pm  { background:#FFFBEB; color:#B45309; border:1px solid #FDE68A; }
+.card-tot { background:#1E293B; color:white;   border:none; box-shadow:0 4px 14px rgba(30,41,59,0.3); }
+.card-tot .lbl  { opacity:0.55; }
+.card-tot .unit { opacity:0.45; }
+
+/* ── Project banner ──────────────────────────────────── */
+.proy-banner {
+    background: white;
+    border-left: 4px solid #3B82F6;
+    border-radius: 0 10px 10px 0;
+    padding: 14px 20px;
+    margin: 14px 0 6px;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+}
+.proy-banner .b-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #1E293B;
+    margin: 0 0 3px;
+}
+.proy-banner .b-sub {
+    font-size: 0.83rem;
+    color: #64748B;
+    margin: 0;
+}
+
+/* ── Estado badges ───────────────────────────────────── */
+.badge {
+    display:inline-flex; align-items:center;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.badge-estimado  { background:#DBEAFE; color:#1D4ED8; }
+.badge-corregido { background:#DCFCE7; color:#15803D; }
+.badge-descartado{ background:#FEE2E2; color:#B91C1C; }
+
+/* ── Info/warning boxes ──────────────────────────────── */
+[data-testid="stAlert"] { border-radius: 8px !important; }
+
+/* ── Subheaders ──────────────────────────────────────── */
+h2, h3 { color: #1E293B !important; font-weight: 600 !important; }
+</style>
+""", unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════
 # DATOS
 # ══════════════════════════════════════════════════════
 @st.cache_data(ttl=60)
@@ -633,9 +826,13 @@ with tab_proy:
         filas = rd["filas"]
 
         st.divider()
-        titulo_res = f"📊 Estimación: {rd['nombre']}" if rd["nombre"] else "📊 Estimación del Proyecto"
-        st.subheader(titulo_res)
-        st.caption(f"Integración base: **{rd['integracion']}**")
+        titulo_res = f"Estimación: {rd['nombre']}" if rd["nombre"] else "Estimación del Proyecto"
+        st.markdown(f"""
+        <div class="proy-banner">
+          <p class="b-title">📊 {titulo_res}</p>
+          <p class="b-sub">Integración base: <strong>{rd['integracion']}</strong></p>
+        </div>
+        """, unsafe_allow_html=True)
 
         df_res = pd.DataFrame(filas)
 
@@ -680,24 +877,38 @@ with tab_proy:
         st.subheader("⏱️ Totales por Rol")
 
         _r = lambda v: int(round(v))
+        # Valores a mostrar en las cards (ajustados si hay ahorro PM)
+        _tc_d  = _r(ajuste["tc"])
+        _sc_d  = _r(ajuste["sc"])
+        _pm_d  = _r(ajuste["pm"])
+        _tot_d = _r(ajuste["total_ajustado"])
+
+        st.markdown(f"""
+        <div class="rol-cards">
+          <div class="rol-card card-tc">
+            <div class="lbl">👷 TC</div>
+            <div class="val">{_tc_d}</div>
+            <div class="unit">horas</div>
+          </div>
+          <div class="rol-card card-sc">
+            <div class="lbl">💼 SC</div>
+            <div class="val">{_sc_d}</div>
+            <div class="unit">horas</div>
+          </div>
+          <div class="rol-card card-pm">
+            <div class="lbl">📋 PM</div>
+            <div class="val">{_pm_d}</div>
+            <div class="unit">horas</div>
+          </div>
+          <div class="rol-card card-tot">
+            <div class="lbl">🔢 Total</div>
+            <div class="val">{_tot_d}</div>
+            <div class="unit">horas</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
         if ajuste["ahorro_pm"] > 0:
-            df_totales = pd.DataFrame({
-                "":         ["Suma directa", "Ajustado"],
-                "👷 TC":    [_r(total_tc),    _r(ajuste["tc"])],
-                "💼 SC":    [_r(total_sc),    _r(ajuste["sc"])],
-                "📋 PM":    [_r(total_pm),    _r(ajuste["pm"])],
-                "🔢 Total": [_r(total_bruto), _r(ajuste["total_ajustado"])],
-            })
-            st.dataframe(df_totales, hide_index=True, use_container_width=True)
             st.caption(f"💡 {ajuste['nota']} — ahorro PM: **{_r(ajuste['ahorro_pm'])}h**")
-        else:
-            df_totales = pd.DataFrame({
-                "👷 TC":    [_r(total_tc)],
-                "💼 SC":    [_r(total_sc)],
-                "📋 PM":    [_r(total_pm)],
-                "🔢 Total": [_r(total_bruto)],
-            })
-            st.dataframe(df_totales, hide_index=True, use_container_width=True)
 
         # ── Análisis Gemini
         st.divider()
@@ -914,7 +1125,7 @@ with tab_historial:
             estado = p.get("estado", "estimado")
             estado_icon = {"estimado": "📋", "corregido": "✅", "descartado": "❌"}.get(estado, "📋")
             label = (
-                f"{estado_icon} **{p['nombre'] or 'Sin nombre'}** · "
+                f"{estado_icon} {p['nombre'] or 'Sin nombre'} · "
                 f"{p['timestamp'][:10]} · {p['integracion']} · "
                 f"Total: {p['totales']['total_ajustado']}h"
             )
@@ -922,6 +1133,10 @@ with tab_historial:
                 label += f" → Real: {p['horas_reales']}h"
 
             with st.expander(label):
+                # Estado badge
+                badge_class = f"badge badge-{estado}"
+                badge_label = {"estimado": "📋 Estimado", "corregido": "✅ Corregido", "descartado": "❌ Descartado"}.get(estado, estado)
+                st.markdown(f'<span class="{badge_class}">{badge_label}</span>', unsafe_allow_html=True)
                 if p.get("nota"):
                     st.caption(f"📝 {p['nota']}")
 
@@ -947,11 +1162,30 @@ with tab_historial:
                 sc_sum = int(edited_comp["SC"].sum())
                 pm_sum = int(edited_comp["PM"].sum())
                 tot_sum = tc_sum + sc_sum + pm_sum
-                st.markdown(
-                    f"**Totales →** TC: {tc_sum}h &nbsp;|&nbsp; SC: {sc_sum}h &nbsp;|&nbsp; PM: {pm_sum}h"
-                    f" &nbsp;|&nbsp; **Total: {tot_sum}h**",
-                    unsafe_allow_html=True,
-                )
+                st.markdown(f"""
+                <div class="rol-cards" style="margin:10px 0 6px;">
+                  <div class="rol-card card-tc" style="padding:10px 12px;">
+                    <div class="lbl">👷 TC</div>
+                    <div class="val" style="font-size:1.5rem;">{tc_sum}</div>
+                    <div class="unit">h</div>
+                  </div>
+                  <div class="rol-card card-sc" style="padding:10px 12px;">
+                    <div class="lbl">💼 SC</div>
+                    <div class="val" style="font-size:1.5rem;">{sc_sum}</div>
+                    <div class="unit">h</div>
+                  </div>
+                  <div class="rol-card card-pm" style="padding:10px 12px;">
+                    <div class="lbl">📋 PM</div>
+                    <div class="val" style="font-size:1.5rem;">{pm_sum}</div>
+                    <div class="unit">h</div>
+                  </div>
+                  <div class="rol-card card-tot" style="padding:10px 12px;">
+                    <div class="lbl">🔢 Total</div>
+                    <div class="val" style="font-size:1.5rem;">{tot_sum}</div>
+                    <div class="unit">h</div>
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
 
                 # ── Corregir estimación
                 st.markdown("---")
