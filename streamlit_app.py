@@ -22,88 +22,122 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap');
 
+/* ── Variables Sovos ─────────────────────────────────── */
+:root {
+    --sovos-navy:   #0a0e33;
+    --sovos-cyan:   #00bcff;
+    --sovos-cyan2:  #33b5f3;
+    --sovos-bg:     #f0f5fa;
+    --sovos-white:  #ffffff;
+    --border:       #dde3ea;
+    --text-main:    #0a0e33;
+    --text-muted:   #5c6680;
+}
+
 html, body, [class*="css"] {
     font-family: 'DM Sans', sans-serif !important;
 }
 
 /* ── App background ──────────────────────────────────── */
-.stApp { background-color: #F1F5F9; }
+.stApp { background-color: var(--sovos-bg); }
 .stApp > header { background-color: transparent !important; }
-section[data-testid="stSidebar"] { background: #1E293B; }
+section[data-testid="stSidebar"] { background: var(--sovos-navy); }
 
-/* ── Main title ──────────────────────────────────────── */
+/* ── Main title — barra Sovos ────────────────────────── */
 h1 {
-    background: #1E293B;
+    background: linear-gradient(90deg, var(--sovos-navy) 0%, #12186a 100%);
     color: white !important;
     font-weight: 700 !important;
-    font-size: 1.45rem !important;
-    letter-spacing: -0.01em !important;
-    padding: 14px 22px !important;
+    font-size: 1.35rem !important;
+    letter-spacing: 0.01em !important;
+    padding: 16px 24px !important;
     border-radius: 10px !important;
     margin-bottom: 0 !important;
+    border-bottom: 3px solid var(--sovos-cyan) !important;
+    position: relative;
+}
+/* Punto de acento cyan junto al texto */
+h1::before {
+    content: '';
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    background: var(--sovos-cyan);
+    border-radius: 50%;
+    margin-right: 10px;
+    vertical-align: middle;
+    box-shadow: 0 0 8px var(--sovos-cyan);
 }
 
 /* ── Tabs ────────────────────────────────────────────── */
 .stTabs [data-baseweb="tab-list"] {
-    background-color: #1E293B;
+    background-color: var(--sovos-navy);
     border-radius: 8px;
     padding: 5px 8px;
     gap: 3px;
     margin-top: 4px;
 }
 .stTabs [data-baseweb="tab"] {
-    color: #94A3B8 !important;
+    color: rgba(255,255,255,0.5) !important;
     font-weight: 500;
-    font-size: 0.88rem;
+    font-size: 0.87rem;
     border-radius: 6px;
     padding: 8px 18px;
     transition: all 0.15s;
 }
+.stTabs [data-baseweb="tab"]:hover {
+    color: rgba(255,255,255,0.85) !important;
+    background: rgba(0,188,255,0.12) !important;
+}
 .stTabs [data-baseweb="tab"][aria-selected="true"] {
-    background-color: #3B82F6 !important;
-    color: white !important;
-    font-weight: 600 !important;
+    background-color: var(--sovos-cyan) !important;
+    color: var(--sovos-navy) !important;
+    font-weight: 700 !important;
 }
 .stTabs [data-baseweb="tab-highlight"],
 .stTabs [data-baseweb="tab-border"] { display: none !important; }
 
 /* ── Primary buttons ─────────────────────────────────── */
 div.stButton > button[kind="primary"] {
-    background: linear-gradient(135deg, #3B82F6, #2563EB) !important;
+    background: var(--sovos-cyan) !important;
     border: none !important;
     border-radius: 8px !important;
-    font-weight: 600 !important;
+    font-weight: 700 !important;
     font-size: 0.88rem !important;
-    color: white !important;
+    color: var(--sovos-navy) !important;
     padding: 0.5rem 1.4rem !important;
-    box-shadow: 0 2px 6px rgba(59,130,246,0.35) !important;
+    box-shadow: 0 2px 10px rgba(0,188,255,0.35) !important;
     transition: all 0.15s !important;
+    letter-spacing: 0.01em;
 }
 div.stButton > button[kind="primary"]:hover {
-    background: linear-gradient(135deg, #2563EB, #1D4ED8) !important;
-    box-shadow: 0 4px 12px rgba(59,130,246,0.45) !important;
+    background: var(--sovos-cyan2) !important;
+    box-shadow: 0 4px 16px rgba(0,188,255,0.5) !important;
     transform: translateY(-1px);
 }
 div.stButton > button[kind="secondary"] {
     border-radius: 8px !important;
     font-weight: 500 !important;
+    border-color: var(--border) !important;
 }
 
 /* ── Expanders ───────────────────────────────────────── */
 details[data-testid="stExpander"] > summary {
-    background: white !important;
-    border: 1px solid #E2E8F0 !important;
+    background: var(--sovos-white) !important;
+    border: 1px solid var(--border) !important;
     border-radius: 8px !important;
     font-weight: 500 !important;
     padding: 12px 16px !important;
+    color: var(--text-main) !important;
 }
 details[data-testid="stExpander"][open] > summary {
     border-radius: 8px 8px 0 0 !important;
     border-bottom-color: transparent !important;
+    border-left: 3px solid var(--sovos-cyan) !important;
 }
 details[data-testid="stExpander"] > div[data-testid="stExpanderDetails"] {
-    background: white !important;
-    border: 1px solid #E2E8F0 !important;
+    background: var(--sovos-white) !important;
+    border: 1px solid var(--border) !important;
     border-top: none !important;
     border-radius: 0 0 8px 8px !important;
 }
@@ -111,20 +145,20 @@ details[data-testid="stExpander"] > div[data-testid="stExpanderDetails"] {
 /* ── DataFrames / data_editor ────────────────────────── */
 [data-testid="stDataFrame"], iframe[title="st_aggrid"] {
     border-radius: 8px !important;
-    border: 1px solid #E2E8F0 !important;
+    border: 1px solid var(--border) !important;
     overflow: hidden !important;
 }
 
 /* ── Metric cards ────────────────────────────────────── */
 [data-testid="metric-container"] {
-    background: white;
-    border: 1px solid #E2E8F0;
+    background: var(--sovos-white);
+    border: 1px solid var(--border);
     border-radius: 10px;
     padding: 14px 16px;
 }
 
 /* ── HR dividers ─────────────────────────────────────── */
-hr { border-color: #E2E8F0 !important; margin: 18px 0 !important; }
+hr { border-color: var(--border) !important; margin: 18px 0 !important; }
 
 /* ── Role total cards ────────────────────────────────── */
 .rol-cards {
@@ -158,17 +192,20 @@ hr { border-color: #E2E8F0 !important; margin: 18px 0 !important; }
     margin-top: 4px;
     opacity: 0.6;
 }
-.card-tc  { background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE; }
+/* Colores con paleta Sovos */
+.card-tc  { background:#e6f9ff; color:#007aad; border:1px solid #99e6ff; }
 .card-sc  { background:#F0FDF4; color:#15803D; border:1px solid #BBF7D0; }
 .card-pm  { background:#FFFBEB; color:#B45309; border:1px solid #FDE68A; }
-.card-tot { background:#1E293B; color:white;   border:none; box-shadow:0 4px 14px rgba(30,41,59,0.3); }
+.card-tot { background:var(--sovos-navy); color:white; border:none;
+            box-shadow:0 4px 16px rgba(10,14,51,0.35);
+            border-bottom: 3px solid var(--sovos-cyan); }
 .card-tot .lbl  { opacity:0.55; }
 .card-tot .unit { opacity:0.45; }
 
 /* ── Project banner ──────────────────────────────────── */
 .proy-banner {
-    background: white;
-    border-left: 4px solid #3B82F6;
+    background: var(--sovos-white);
+    border-left: 4px solid var(--sovos-cyan);
     border-radius: 0 10px 10px 0;
     padding: 14px 20px;
     margin: 14px 0 6px;
@@ -177,12 +214,12 @@ hr { border-color: #E2E8F0 !important; margin: 18px 0 !important; }
 .proy-banner .b-title {
     font-size: 1.05rem;
     font-weight: 700;
-    color: #1E293B;
+    color: var(--sovos-navy);
     margin: 0 0 3px;
 }
 .proy-banner .b-sub {
     font-size: 0.83rem;
-    color: #64748B;
+    color: var(--text-muted);
     margin: 0;
 }
 
@@ -196,57 +233,56 @@ hr { border-color: #E2E8F0 !important; margin: 18px 0 !important; }
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
-.badge-estimado  { background:#DBEAFE; color:#1D4ED8; }
+.badge-estimado  { background:#e6f9ff; color:#007aad; }
 .badge-corregido { background:#DCFCE7; color:#15803D; }
 .badge-descartado{ background:#FEE2E2; color:#B91C1C; }
 
-/* ── Info/warning boxes ──────────────────────────────── */
+/* ── Info/warning/success boxes ──────────────────────── */
 [data-testid="stAlert"] { border-radius: 8px !important; }
 
 /* ── Subheaders ──────────────────────────────────────── */
-h2, h3 { color: #1E293B !important; font-weight: 600 !important; }
+h2, h3 { color: var(--sovos-navy) !important; font-weight: 600 !important; }
 
 /* ── Inputs / Selectbox / Multiselect ───────────────── */
 .stTextInput > div > div > input,
 .stTextArea > div > div > textarea {
-    background: white !important;
-    border: 1.5px solid #CBD5E1 !important;
+    background: var(--sovos-white) !important;
+    border: 1.5px solid var(--border) !important;
     border-radius: 8px !important;
-    color: #1E293B !important;
+    color: var(--text-main) !important;
     font-family: 'DM Sans', sans-serif !important;
     padding: 8px 12px !important;
 }
 .stTextInput > div > div > input:focus,
 .stTextArea > div > div > textarea:focus {
-    border-color: #3B82F6 !important;
-    box-shadow: 0 0 0 3px rgba(59,130,246,0.15) !important;
+    border-color: var(--sovos-cyan) !important;
+    box-shadow: 0 0 0 3px rgba(0,188,255,0.18) !important;
 }
 
 /* Selectbox */
 .stSelectbox > div > div,
 .stSelectbox > div > div > div {
-    background: white !important;
-    border: 1.5px solid #CBD5E1 !important;
+    background: var(--sovos-white) !important;
+    border: 1.5px solid var(--border) !important;
     border-radius: 8px !important;
-    color: #1E293B !important;
+    color: var(--text-main) !important;
 }
 
-/* Multiselect — caja visible y alta */
+/* Multiselect */
 .stMultiSelect > div > div {
-    background: white !important;
-    border: 1.5px solid #CBD5E1 !important;
+    background: var(--sovos-white) !important;
+    border: 1.5px solid var(--border) !important;
     border-radius: 8px !important;
     min-height: 44px !important;
-    color: #1E293B !important;
+    color: var(--text-main) !important;
 }
 .stMultiSelect > div > div:focus-within {
-    border-color: #3B82F6 !important;
-    box-shadow: 0 0 0 3px rgba(59,130,246,0.15) !important;
+    border-color: var(--sovos-cyan) !important;
+    box-shadow: 0 0 0 3px rgba(0,188,255,0.18) !important;
 }
-/* Tags de items seleccionados */
 .stMultiSelect [data-baseweb="tag"] {
-    background: #DBEAFE !important;
-    color: #1D4ED8 !important;
+    background: #e6f9ff !important;
+    color: #007aad !important;
     border-radius: 6px !important;
     font-weight: 500 !important;
     font-size: 0.82rem !important;
@@ -259,9 +295,9 @@ h2, h3 { color: #1E293B !important; font-weight: 600 !important; }
 .stMultiSelect label,
 .stNumberInput label,
 [data-testid="stWidgetLabel"] {
-    color: #374151 !important;
+    color: var(--text-muted) !important;
     font-weight: 600 !important;
-    font-size: 0.83rem !important;
+    font-size: 0.82rem !important;
     text-transform: uppercase !important;
     letter-spacing: 0.04em !important;
     margin-bottom: 4px !important;
@@ -269,14 +305,17 @@ h2, h3 { color: #1E293B !important; font-weight: 600 !important; }
 
 /* Contenedor de columnas — fondo blanco como card */
 .stColumn > div {
-    background: white;
+    background: var(--sovos-white);
     border-radius: 10px;
     padding: 18px 20px !important;
-    border: 1px solid #E2E8F0;
+    border: 1px solid var(--border);
 }
 
-/* Select slider */
+/* Select slider — acento cyan */
 .stSlider > div { padding: 4px 0; }
+[data-testid="stSlider"] > div > div > div {
+    background: var(--sovos-cyan) !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -630,7 +669,7 @@ df_roles = _load_roles()
 # ══════════════════════════════════════════════════════
 # TÍTULO
 # ══════════════════════════════════════════════════════
-st.title("🤖 Estimador de Esfuerzo PS · Sovos")
+st.title("Estimador de Esfuerzo PS · Sovos")
 
 tab_proy, tab_libre, tab_historial, tab_catalogo = st.tabs([
     "📋 Estimador de Proyecto",
