@@ -205,6 +205,78 @@ hr { border-color: #E2E8F0 !important; margin: 18px 0 !important; }
 
 /* ── Subheaders ──────────────────────────────────────── */
 h2, h3 { color: #1E293B !important; font-weight: 600 !important; }
+
+/* ── Inputs / Selectbox / Multiselect ───────────────── */
+.stTextInput > div > div > input,
+.stTextArea > div > div > textarea {
+    background: white !important;
+    border: 1.5px solid #CBD5E1 !important;
+    border-radius: 8px !important;
+    color: #1E293B !important;
+    font-family: 'DM Sans', sans-serif !important;
+    padding: 8px 12px !important;
+}
+.stTextInput > div > div > input:focus,
+.stTextArea > div > div > textarea:focus {
+    border-color: #3B82F6 !important;
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.15) !important;
+}
+
+/* Selectbox */
+.stSelectbox > div > div,
+.stSelectbox > div > div > div {
+    background: white !important;
+    border: 1.5px solid #CBD5E1 !important;
+    border-radius: 8px !important;
+    color: #1E293B !important;
+}
+
+/* Multiselect — caja visible y alta */
+.stMultiSelect > div > div {
+    background: white !important;
+    border: 1.5px solid #CBD5E1 !important;
+    border-radius: 8px !important;
+    min-height: 44px !important;
+    color: #1E293B !important;
+}
+.stMultiSelect > div > div:focus-within {
+    border-color: #3B82F6 !important;
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.15) !important;
+}
+/* Tags de items seleccionados */
+.stMultiSelect [data-baseweb="tag"] {
+    background: #DBEAFE !important;
+    color: #1D4ED8 !important;
+    border-radius: 6px !important;
+    font-weight: 500 !important;
+    font-size: 0.82rem !important;
+}
+
+/* Labels de formulario */
+.stTextInput label,
+.stTextArea label,
+.stSelectbox label,
+.stMultiSelect label,
+.stNumberInput label,
+[data-testid="stWidgetLabel"] {
+    color: #374151 !important;
+    font-weight: 600 !important;
+    font-size: 0.83rem !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.04em !important;
+    margin-bottom: 4px !important;
+}
+
+/* Contenedor de columnas — fondo blanco como card */
+.stColumn > div {
+    background: white;
+    border-radius: 10px;
+    padding: 18px 20px !important;
+    border: 1px solid #E2E8F0;
+}
+
+/* Select slider */
+.stSlider > div { padding: 4px 0; }
 </style>
 """, unsafe_allow_html=True)
 
