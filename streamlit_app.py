@@ -694,6 +694,107 @@ Responde en español, máximo 220 palabras. Sin introducción."""
 
 
 # ══════════════════════════════════════════════════════
+# DEDUPLICACIÓN INTELIGENTE DE TAREAS
+# ══════════════════════════════════════════════════════
+def _overlap_score(a: str, b: str) -> float:
+    """Jaccard sobre tokens normalizados ≥ 3 letras, sin stopwords."""
+    import re, unicodedata
+    def _toks(s):
+        s = unicodedata.normalize("NFD", str(s))
+        s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+        toks = set(re.findall(r"[a-z]{3,}", s.lower()))
+        return toks - {"del","los","las","una","que","por","con","para","desde",
+                       "hasta","todo","todos","cada","nuevo","nueva"}
+    ta, tb = _toks(a), _toks(b)
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def _deduplicar_filas(filas: list) -> tuple:
+    """
+    Detecta duplicados entre tareas IA y componentes de catálogo.
+
+    Reglas:
+    • IA vs Catálogo >= 0.65 → reduce horas IA en (solapamiento × horas), marca motivo
+    • IA vs Catálogo 0.40–0.65 → aviso en Referencia IA, sin tocar horas
+    • IA vs IA        >= 0.70 → fusiona: la de más horas absorbe a la otra (horas=0)
+
+    Devuelve (filas_ajustadas, lista_de_alertas_str)
+    """
+    _CAT = {"📦 Catálogo", "🔍 Búsqueda"}
+    filas = [f.copy() for f in filas]
+    alertas: list[str] = []
+
+    cat_rows = [f for f in filas if f["Origen"] in _CAT]
+    ia_idx   = [i for i, f in enumerate(filas) if f["Origen"] not in _CAT
+                and "✏️ Manual" not in f["Origen"]]  # no tocar ajustes manuales
+
+    # ── Paso 1: IA vs Catálogo ────────────────────────
+    for i in ia_idx:
+        f = filas[i]
+        best_s, best_cat = 0.0, None
+        for cat in cat_rows:
+            s = _overlap_score(f["Paquete / Tarea"], cat["Paquete / Tarea"])
+            if s > best_s:
+                best_s, best_cat = s, cat
+
+        if best_cat and best_s >= 0.65:
+            # Reducción proporcional: lo que el catálogo ya cubre, la IA no debe cobrar
+            factor   = max(0.0, 1.0 - best_s)
+            orig_tot = f["Total (h)"]
+            f["TC (h)"] = max(0, int(round(f["TC (h)"] * factor)))
+            f["SC (h)"] = max(0, int(round(f["SC (h)"] * factor)))
+            f["PM (h)"] = max(0, int(round(f["PM (h)"] * factor)))
+            f["Total (h)"] = f["TC (h)"] + f["SC (h)"] + f["PM (h)"]
+            nota = (f"⚠️ {int(best_s*100)}% cubierto por catálogo "
+                    f"'{best_cat['Paquete / Tarea']}' · {orig_tot}h→{f['Total (h)']}h")
+            f["Referencia IA"] = nota
+            alertas.append(
+                f"**{f['Paquete / Tarea']}** solapa {int(best_s*100)}% con catálogo "
+                f"**{best_cat['Paquete / Tarea']}** — horas reducidas "
+                f"{orig_tot}h → {f['Total (h)']}h"
+            )
+
+        elif best_cat and best_s >= 0.40:
+            old_ref = f["Referencia IA"]
+            f["Referencia IA"] = (
+                (old_ref.rstrip("—").strip() + " · " if old_ref not in ("—", "") else "")
+                + f"⚠️ Similar a: {best_cat['Paquete / Tarea']}"
+            )
+
+    # ── Paso 2: IA vs IA (fusión de tareas similares) ─
+    fusionados: set = set()
+    for pi, idx_a in enumerate(ia_idx):
+        if idx_a in fusionados:
+            continue
+        for idx_b in ia_idx[pi + 1:]:
+            if idx_b in fusionados:
+                continue
+            s = _overlap_score(
+                filas[idx_a]["Paquete / Tarea"],
+                filas[idx_b]["Paquete / Tarea"]
+            )
+            if s >= 0.70:
+                winner = idx_a if filas[idx_a]["Total (h)"] >= filas[idx_b]["Total (h)"] else idx_b
+                loser  = idx_b if winner == idx_a else idx_a
+                loser_name   = filas[loser]["Paquete / Tarea"]
+                winner_name  = filas[winner]["Paquete / Tarea"]
+                alertas.append(
+                    f"**{loser_name}** es {int(s*100)}% similar a **{winner_name}** "
+                    f"— fusionadas para evitar duplicado"
+                )
+                filas[loser]["TC (h)"]        = 0
+                filas[loser]["SC (h)"]        = 0
+                filas[loser]["PM (h)"]        = 0
+                filas[loser]["Total (h)"]     = 0
+                filas[loser]["Referencia IA"] = f"🔗 Fusionado con: {winner_name}"
+                fusionados.add(loser)
+
+    return filas, alertas
+
+
+# ══════════════════════════════════════════════════════
 # BÚSQUEDA LIBRE EN CATÁLOGO
 # ══════════════════════════════════════════════════════
 def _buscar_catalogo_libre(texto: str, df_roles: pd.DataFrame, top_n: int = 6) -> list:
@@ -1108,6 +1209,18 @@ with tab_proy:
         if not filas_res:
             st.warning("⚠️ Selecciona al menos un escenario del catálogo o agrega una tarea.")
         else:
+            # ── Deduplicación inteligente ─────────────────
+            filas_res, alertas_dup = _deduplicar_filas(filas_res)
+            if alertas_dup:
+                with st.expander(
+                    f"🔄 {len(alertas_dup)} ajuste(s) automático(s) para evitar duplicados",
+                    expanded=True,
+                ):
+                    st.caption("La IA detectó tareas que se solapan con el catálogo u otras tareas IA. "
+                               "Las horas se ajustaron automáticamente. Puedes editarlas en la tabla.")
+                    for a in alertas_dup:
+                        st.markdown(f"• {a}")
+
             st.session_state.resultado_proyecto = {
                 "filas":       filas_res,
                 "nombre":      nombre_proy,
