@@ -795,29 +795,143 @@ def _deduplicar_filas(filas: list) -> tuple:
 
 
 # ══════════════════════════════════════════════════════
-# BÚSQUEDA LIBRE EN CATÁLOGO
+# BÚSQUEDA INTELIGENTE EN CATÁLOGO
+# Usa sinónimos del dominio PS + recall sobre catálogo
 # ══════════════════════════════════════════════════════
+
+# Diccionario de sinónimos del dominio PS/fiscal
+# Clave = término que puede escribir el usuario → expansión = términos del catálogo
+_PS_SYNONYMS: dict[str, list[str]] = {
+    # Templates / Plantillas
+    "xsl":          ["plantilla", "template", "modificacion"],
+    "xslt":         ["plantilla", "template"],
+    "template":     ["plantilla"],
+    "membrete":     ["logo", "imagen", "plantilla", "campo"],
+    "visualizacion":["plantilla", "template", "diseño"],
+    "mail":         ["plantilla", "documento", "correo"],
+    "email":        ["plantilla", "correo", "campo"],
+    "pdf":          ["plantilla", "documento"],
+    "impresion":    ["plantilla"],
+    "layout":       ["plantilla", "diseño"],
+    "diseño":       ["plantilla"],
+    "formato":      ["plantilla", "campo"],
+    # Modificaciones
+    "actualizar":   ["modificacion", "modificar", "cambio", "correccion"],
+    "actualización":["modificacion", "modificar"],
+    "corregir":     ["modificacion", "correccion", "cambio"],
+    "corrección":   ["modificacion"],
+    "cambiar":      ["modificacion", "cambio"],
+    "ajustar":      ["modificacion"],
+    "reemplazar":   ["modificacion", "campo"],
+    "eliminar":     ["modificacion", "campo"],
+    "agregar":      ["modificacion", "campo", "nuevo"],
+    "añadir":       ["modificacion", "campo", "nuevo"],
+    "incluir":      ["modificacion", "campo"],
+    # Campos
+    "campo":        ["campo"],
+    "texto":        ["campo"],
+    "dato":         ["campo"],
+    "firma":        ["campo", "plantilla"],
+    "dirección":    ["campo"],
+    "direccion":    ["campo"],
+    "telefono":     ["campo"],
+    "teléfono":     ["campo"],
+    "rut":          ["campo", "dato"],
+    "logo":         ["logo", "imagen"],
+    "imagen":       ["logo", "imagen"],
+    "nombre":       ["campo", "dato"],
+    "razon":        ["campo", "dato"],
+    "giro":         ["campo", "dato"],
+    # Procesos PS
+    "habilitacion": ["habilitacion", "activacion", "nuevo"],
+    "habilitar":    ["habilitacion", "activacion"],
+    "activar":      ["habilitacion", "activacion"],
+    "configurar":   ["configuracion"],
+    "configuracion":["configuracion"],
+    "implementar":  ["implementacion"],
+    "implementacion":["implementacion"],
+    "integracion":  ["integracion"],
+    "migracion":    ["migracion"],
+    "migrar":       ["migracion"],
+    "certificado":  ["certificacion", "certificado"],
+    "certificacion":["certificacion"],
+    "go-live":      ["golive", "acompañamiento", "soporte"],
+    "golive":       ["golive", "acompañamiento"],
+    "soporte":      ["soporte", "acompañamiento"],
+    "prueba":       ["testing", "qa"],
+    "testing":      ["testing", "qa"],
+    # Documentos SII / fiscales
+    "dte":          ["dte", "documento", "factura"],
+    "factura":      ["factura", "dte"],
+    "boleta":       ["boleta", "dte"],
+    "nota":         ["nota", "dte"],
+    "guia":         ["guia", "dte"],
+    "liquidacion":  ["liquidacion", "dte"],
+    "cesion":       ["cesion"],
+    "recepcion":    ["recepcion"],
+    "reclamacion":  ["reclamacion"],
+    "ppl":          ["ppl"],
+    "coapi":        ["coapi"],
+    "res154":       ["res154"],
+    "res55":        ["res55"],
+    # Módulos / Sistemas
+    "gateway":      ["gateway", "gw", "configuracion"],
+    "epos":         ["epos", "pos", "gateway"],
+    "pos":          ["pos", "gateway"],
+    "api":          ["api", "integracion"],
+    "sftp":         ["sftp", "integracion"],
+    "xml":          ["xml", "plantilla", "documento"],
+    "json":         ["json", "api"],
+    # Generales
+    "nuevo":        ["nuevo", "habilitacion", "creacion"],
+    "nueva":        ["nuevo", "habilitacion", "creacion"],
+    "creacion":     ["creacion", "nuevo"],
+    "crear":        ["creacion", "nuevo"],
+    "desde":        ["creacion", "nuevo"],
+    "sociedad":     ["sociedad", "rut", "empresa"],
+    "empresa":      ["empresa", "cliente"],
+    "cliente":      ["cliente"],
+    "mandato":      ["mandato", "requerimiento"],
+    "requerimiento":["requerimiento"],
+}
+
+
+def _expandir_tokens(tokens: set) -> set:
+    """Expande el conjunto de tokens con sinónimos del dominio PS."""
+    expandidos = set(tokens)
+    for t in tokens:
+        for sinónimo in _PS_SYNONYMS.get(t, []):
+            expandidos.add(sinónimo)
+    return expandidos
+
+
 def _buscar_catalogo_libre(texto: str, df_roles: pd.DataFrame, top_n: int = 6) -> list:
     """
-    Busca componentes en df_roles usando token overlap sobre paquete+escenario.
-    Devuelve lista de dicts ordenada por score descendente.
+    Busca componentes en df_roles.
+    Usa expansión de sinónimos del dominio PS + métrica combinada:
+      - Recall sobre catálogo (qué % del catálogo está cubierto por la query)
+      - Jaccard penaliza si la query no tiene nada que ver
+    Esto permite que descripciones largas con vocabulario natural encuentren
+    ítems del catálogo aunque usen términos distintos (XSL → plantilla, etc.)
     """
     import unicodedata, re as _re
+
+    STOP = {"de","la","el","en","y","a","con","por","para","del","los","las",
+            "un","una","se","su","que","es","al","lo","desde","hasta","debe",
+            "decir","ser","por","sin","mas","pero","como","este","esta","esos"}
 
     def _norm(s):
         s = unicodedata.normalize("NFD", str(s))
         s = "".join(c for c in s if unicodedata.category(c) != "Mn")
         return _re.sub(r"[^a-z0-9\s]", " ", s.lower())
 
-    STOP = {"de","la","el","en","y","a","con","por","para","del","los","las",
-            "un","una","se","su","que","es","al","lo","desde","hasta","con"}
-
     def tokenize(s):
         return set(_norm(s).split()) - STOP
 
-    qtoks = tokenize(texto)
-    if not qtoks:
+    raw_q = tokenize(texto)
+    if not raw_q:
         return []
+    qtoks = _expandir_tokens(raw_q)   # query expandida con sinónimos
 
     seen: set = set()
     resultados = []
@@ -827,18 +941,31 @@ def _buscar_catalogo_libre(texto: str, df_roles: pd.DataFrame, top_n: int = 6) -
             continue
         seen.add(key)
         etiqueta = f"{row['paquete']} · {row['escenario']}"
-        ktoks = tokenize(etiqueta)
+        # También expandir tokens del catálogo (para mayor cobertura)
+        cat_raw  = tokenize(etiqueta)
+        ktoks    = _expandir_tokens(cat_raw)
         if not ktoks:
             continue
+
         inter = qtoks & ktoks
         if not inter:
             continue
-        # Jaccard + bonus por cobertura de la query
-        jaccard = len(inter) / len(qtoks | ktoks)
-        cover_q = len(inter) / len(qtoks)
-        score = 0.5 * jaccard + 0.5 * cover_q
-        if score > 0.05:
-            resultados.append({"opt": etiqueta, "score": score, "inter": sorted(inter)})
+
+        # Recall: qué % de los tokens del catálogo están en la query expandida
+        recall   = len(inter) / len(cat_raw) if cat_raw else 0.0
+        # Jaccard: penaliza si la query tiene vocabulario muy distinto
+        jaccard  = len(inter) / len(qtoks | ktoks)
+        # Score final: recall pesa más (permite queries largas)
+        score    = 0.70 * recall + 0.30 * jaccard
+
+        if score > 0.08:
+            # Mostrar qué tokens originales (sin expandir) generaron el match
+            inter_display = sorted((raw_q | cat_raw) & inter)
+            resultados.append({
+                "opt":   etiqueta,
+                "score": score,
+                "inter": inter_display or sorted(inter)[:4],
+            })
 
     resultados.sort(key=lambda x: x["score"], reverse=True)
     return resultados[:top_n]
