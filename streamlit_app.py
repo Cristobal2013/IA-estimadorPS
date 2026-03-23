@@ -694,12 +694,63 @@ Responde en español, máximo 220 palabras. Sin introducción."""
 
 
 # ══════════════════════════════════════════════════════
+# BÚSQUEDA LIBRE EN CATÁLOGO
+# ══════════════════════════════════════════════════════
+def _buscar_catalogo_libre(texto: str, df_roles: pd.DataFrame, top_n: int = 6) -> list:
+    """
+    Busca componentes en df_roles usando token overlap sobre paquete+escenario.
+    Devuelve lista de dicts ordenada por score descendente.
+    """
+    import unicodedata, re as _re
+
+    def _norm(s):
+        s = unicodedata.normalize("NFD", str(s))
+        s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+        return _re.sub(r"[^a-z0-9\s]", " ", s.lower())
+
+    STOP = {"de","la","el","en","y","a","con","por","para","del","los","las",
+            "un","una","se","su","que","es","al","lo","desde","hasta","con"}
+
+    def tokenize(s):
+        return set(_norm(s).split()) - STOP
+
+    qtoks = tokenize(texto)
+    if not qtoks:
+        return []
+
+    seen: set = set()
+    resultados = []
+    for _, row in df_roles.iterrows():
+        key = (row["paquete"], row["escenario"])
+        if key in seen:
+            continue
+        seen.add(key)
+        etiqueta = f"{row['paquete']} · {row['escenario']}"
+        ktoks = tokenize(etiqueta)
+        if not ktoks:
+            continue
+        inter = qtoks & ktoks
+        if not inter:
+            continue
+        # Jaccard + bonus por cobertura de la query
+        jaccard = len(inter) / len(qtoks | ktoks)
+        cover_q = len(inter) / len(qtoks)
+        score = 0.5 * jaccard + 0.5 * cover_q
+        if score > 0.05:
+            resultados.append({"opt": etiqueta, "score": score, "inter": sorted(inter)})
+
+    resultados.sort(key=lambda x: x["score"], reverse=True)
+    return resultados[:top_n]
+
+
+# ══════════════════════════════════════════════════════
 # ESTADO DE SESIÓN
 # ══════════════════════════════════════════════════════
 for _k, _v in {
     "resultado_libre": None,
     "resultado_proyecto": None,
     "tareas_extra": [{"texto": "", "tipo": "Implementación"}],
+    "busq_cat_agregados": [],   # componentes del catálogo agregados por búsqueda libre
 }.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -805,6 +856,88 @@ with tab_proy:
                 if fallbacks:
                     st.caption("⚠️ " + " · ".join(fallbacks))
 
+        # ── Búsqueda por descripción libre ───────────────
+        st.markdown("---")
+        st.markdown("**🔍 Búsqueda por descripción**")
+        st.caption("Escribe con tus propias palabras y encuentra componentes del catálogo, o agrégalo como tarea IA.")
+
+        busq_c1, busq_c2 = st.columns([5, 1])
+        with busq_c1:
+            busq_texto = st.text_input(
+                "busq", label_visibility="collapsed",
+                placeholder="Ej: certificado digital, habilitación módulo PPL, go-live...",
+                key="busq_texto_libre",
+            )
+        with busq_c2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            busq_btn = st.button("🔍 Buscar", key="busq_btn", use_container_width=True)
+
+        if busq_btn and busq_texto.strip():
+            if df_roles.empty:
+                st.warning("Catálogo de roles no disponible.")
+            else:
+                st.session_state["_busq_resultados"] = _buscar_catalogo_libre(
+                    busq_texto.strip(), df_roles, top_n=6
+                )
+                st.session_state["_busq_query"] = busq_texto.strip()
+
+        # Mostrar resultados de la última búsqueda
+        resultados_busq = st.session_state.get("_busq_resultados", [])
+        query_busq      = st.session_state.get("_busq_query", "")
+        if resultados_busq:
+            st.markdown(f"**Resultados para:** _{query_busq}_")
+            for ri, res in enumerate(resultados_busq):
+                ya_agregado = res["opt"] in st.session_state.busq_cat_agregados
+                ya_en_multisel = res["opt"] in (componentes_sel if not df_roles.empty else [])
+                confianza = "🟢" if res["score"] > 0.4 else ("🟡" if res["score"] > 0.2 else "🔴")
+
+                rc1, rc2, rc3 = st.columns([6, 2, 2])
+                with rc1:
+                    st.markdown(
+                        f"{confianza} **{res['opt']}** "
+                        f"<span style='color:#64748b;font-size:0.78rem'>({', '.join(res['inter'][:4])})</span>",
+                        unsafe_allow_html=True,
+                    )
+                with rc2:
+                    if ya_agregado or ya_en_multisel:
+                        st.caption("✅ Ya agregado")
+                    else:
+                        if st.button("📦 Catálogo", key=f"add_cat_{ri}", use_container_width=True,
+                                     help="Añadir con horas del catálogo"):
+                            st.session_state.busq_cat_agregados.append(res["opt"])
+                            st.rerun()
+                with rc3:
+                    if st.button("🤖 Agregar IA", key=f"add_ia_{ri}", use_container_width=True,
+                                 help="Añadir como tarea a estimar con IA"):
+                        st.session_state.tareas_extra.append(
+                            {"texto": res["opt"], "tipo": "Implementación"}
+                        )
+                        st.rerun()
+
+            # Opción de agregar directamente como IA si no hay buenas coincidencias
+            st.markdown("---")
+            ci1, ci2 = st.columns([6, 2])
+            with ci1:
+                st.caption(f"¿No encontraste lo que buscas? Agrega **\"{query_busq}\"** como tarea IA")
+            with ci2:
+                if st.button("🤖 Estimar con IA", key="add_ia_query", use_container_width=True):
+                    st.session_state.tareas_extra.append(
+                        {"texto": query_busq, "tipo": "Implementación"}
+                    )
+                    st.rerun()
+
+        # Mostrar resumen de componentes agregados por búsqueda
+        if st.session_state.busq_cat_agregados:
+            st.markdown("**Agregados por búsqueda:**")
+            for bi, bopt in enumerate(st.session_state.busq_cat_agregados):
+                bb1, bb2 = st.columns([8, 1])
+                with bb1:
+                    st.markdown(f"📦 {bopt}")
+                with bb2:
+                    if st.button("✕", key=f"rm_busq_{bi}"):
+                        st.session_state.busq_cat_agregados.pop(bi)
+                        st.rerun()
+
     # ── Tareas adicionales (IA)
     with col_extra:
         st.subheader("✍️ Tareas Adicionales (IA)")
@@ -862,8 +995,12 @@ with tab_proy:
     if btn_proy:
         filas_res: list[dict] = []
 
-        # 1) Componentes seleccionados del catálogo
-        for opt in (componentes_sel if not df_roles.empty else []):
+        # 1) Componentes del catálogo: multiselect + agregados por búsqueda libre
+        _todos_componentes = list(dict.fromkeys(
+            (componentes_sel if not df_roles.empty else []) +
+            st.session_state.get("busq_cat_agregados", [])
+        ))
+        for opt in _todos_componentes:
             paq, esc = opt.split(" · ", 1)
             sub = df_roles[(df_roles["paquete"] == paq) & (df_roles["escenario"] == esc)]
             m = sub[sub["integracion"] == integ_proy]
@@ -876,8 +1013,14 @@ with tab_proy:
                 _tc = int(round(float(row["tc"])))
                 _sc = int(round(float(row["sc"])))
                 _pm = int(round(float(row["pm"])))
+                _origen = (
+                    "🔍 Búsqueda"
+                    if opt in st.session_state.get("busq_cat_agregados", [])
+                       and opt not in (componentes_sel if not df_roles.empty else [])
+                    else "📦 Catálogo"
+                )
                 filas_res.append({
-                    "Origen":          "📦 Catálogo",
+                    "Origen":          _origen,
                     "Paquete / Tarea": f"{paq} · {esc}",
                     "Integración":     row["integracion"],
                     "TC (h)":          _tc,
