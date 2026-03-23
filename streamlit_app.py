@@ -872,195 +872,187 @@ tab_proy, tab_libre, tab_historial, tab_catalogo = st.tabs([
 
 
 # ══════════════════════════════════════════════════════
-# TAB 1 — ESTIMADOR DE PROYECTO (formulario estructurado)
+# TAB 1 — ESTIMADOR DE PROYECTO
 # ══════════════════════════════════════════════════════
 with tab_proy:
 
-    # ── Encabezado ───────────────────────────────────
-    nombre_proy = st.text_input(
-        "Proyecto / Ticket", placeholder="Ej: PSTC-1234 · Cliente ABC", key="nombre_proy"
-    )
+    # ── Fila de encabezado: ticket + integración ──────
+    hdr1, hdr2 = st.columns([3, 1])
+    with hdr1:
+        nombre_proy = st.text_input(
+            "Proyecto / Ticket", placeholder="Ej: PSTC-1234 · Cliente ABC", key="nombre_proy"
+        )
+    with hdr2:
+        integ_proy = st.selectbox(
+            "Integración del cliente",
+            ["Full ASP", "Mixto", "On Premise", "Estandar"],
+            key="integ_proy",
+            help="Full ASP = menor TC, On Premise = mayor TC",
+        )
 
     st.divider()
 
-    col_sel, col_extra = st.columns([3, 2])
+    # ── Construir opciones del catálogo ──────────────
+    opciones_cat: list[str] = []
+    if not df_roles.empty:
+        seen_opts: set = set()
+        for _, row in df_roles.iterrows():
+            opt = f"{row['paquete']} · {row['escenario']}"
+            if opt not in seen_opts:
+                seen_opts.add(opt)
+                opciones_cat.append(opt)
 
-    # ── SELECCIÓN FLAT — un solo multiselect con todos los componentes
-    with col_sel:
-        st.subheader("📦 Componentes del Proyecto")
-        st.caption("Busca por nombre, tecnología o normativa. Puedes combinar libremente.")
+    # helper: resolver horas de un componente según integración
+    def _horas_componente(opt: str, integ: str) -> dict | None:
+        if df_roles.empty or " · " not in opt:
+            return None
+        paq, esc = opt.split(" · ", 1)
+        sub = df_roles[(df_roles["paquete"] == paq) & (df_roles["escenario"] == esc)]
+        m = sub[sub["integracion"] == integ]
+        if m.empty: m = sub[sub["integracion"] == "Estandar"]
+        if m.empty and not sub.empty: m = sub.iloc[:1]
+        if m.empty: return None
+        r = m.iloc[0]
+        return {"TC": int(round(float(r["tc"]))), "SC": int(round(float(r["sc"]))),
+                "PM": int(round(float(r["pm"]))), "integ": r["integracion"]}
 
-        # Solo Integración aquí — afecta las horas del catálogo
-        integ_proy = st.selectbox(
-            "Tipo de integración del cliente",
-            ["Full ASP", "Mixto", "On Premise", "Estandar"],
-            key="integ_proy",
-            help="Define qué variante de horas se usa en el catálogo. Full ASP = menor TC, On Premise = mayor TC.",
-        )
+    # ═══════════════════════════════════════════════
+    # PASO 1 — Buscar o seleccionar componentes
+    # ═══════════════════════════════════════════════
+    st.markdown("### 📦 Paso 1 · Componentes del Catálogo")
+    st.caption("Busca describiendo con tus palabras **o** selecciona directamente del listado.")
 
-        if df_roles.empty:
-            st.warning("No se encontró catalogo_roles.csv en data/")
-            componentes_sel = []
-        else:
-            # Construir opciones: "PAQUETE · ESCENARIO" únicas
-            opciones: list[str] = []
-            seen_opts: set = set()
-            for _, row in df_roles.iterrows():
-                opt = f"{row['paquete']} · {row['escenario']}"
-                if opt not in seen_opts:
-                    seen_opts.add(opt)
-                    opciones.append(opt)
+    p1a, p1b = st.columns([3, 2])
 
-            componentes_sel = st.multiselect(
-                "Selecciona los componentes",
-                options=opciones,
-                placeholder="Busca: Plantillas, PPL, Coapi, RES154 PPL...",
-                key="componentes_sel",
-            )
-
-            # Preview en tiempo real de lo seleccionado
-            if componentes_sel:
-                prev = []
-                fallbacks = []
-                for opt in componentes_sel:
-                    paq, esc = opt.split(" · ", 1)
-                    sub = df_roles[(df_roles["paquete"] == paq) & (df_roles["escenario"] == esc)]
-                    m = sub[sub["integracion"] == integ_proy]
-                    used_integ = integ_proy
-                    if m.empty:
-                        m = sub[sub["integracion"] == "Estandar"]
-                        used_integ = "Estandar"
-                    if m.empty and not sub.empty:
-                        m = sub.iloc[:1]
-                        used_integ = m.iloc[0]["integracion"]
-                    if not m.empty:
-                        r = m.iloc[0]
-                        if used_integ != integ_proy:
-                            fallbacks.append(f"**{opt}** → sin variante {integ_proy}, usa Estandar")
-                        prev.append({
-                            "Componente": opt,
-                            "Integración aplicada": used_integ,
-                            "TC": r["tc"], "SC": r["sc"], "PM": r["pm"], "Total": r["total"],
-                        })
-                if prev:
-                    st.dataframe(
-                        pd.DataFrame(prev),
-                        hide_index=True,
-                        use_container_width=True,
-                        column_config={
-                            "TC": st.column_config.NumberColumn("TC (h)", format="%.1f"),
-                            "SC": st.column_config.NumberColumn("SC (h)", format="%.1f"),
-                            "PM": st.column_config.NumberColumn("PM (h)", format="%.1f"),
-                            "Total": st.column_config.NumberColumn("Total (h)", format="%.1f"),
-                        },
-                    )
-                if fallbacks:
-                    st.caption("⚠️ " + " · ".join(fallbacks))
-
-        # ── Búsqueda por descripción libre ───────────────
-        st.markdown("---")
-        st.markdown("**🔍 Búsqueda por descripción**")
-        st.caption("Escribe con tus propias palabras y encuentra componentes del catálogo, o agrégalo como tarea IA.")
-
-        busq_c1, busq_c2 = st.columns([5, 1])
-        with busq_c1:
-            busq_texto = st.text_input(
+    # ── Columna izquierda: búsqueda por texto ────────
+    with p1a:
+        st.markdown("**🔍 Buscar por descripción**")
+        bc1, bc2 = st.columns([5, 1])
+        with bc1:
+            busq_q = st.text_input(
                 "busq", label_visibility="collapsed",
-                placeholder="Ej: certificado digital, habilitación módulo PPL, go-live...",
-                key="busq_texto_libre",
+                placeholder="Ej: plantillas facturas, certificado digital, go-live...",
+                key="busq_q",
             )
-        with busq_c2:
+        with bc2:
             st.markdown("<br>", unsafe_allow_html=True)
-            busq_btn = st.button("🔍 Buscar", key="busq_btn", use_container_width=True)
+            busq_btn = st.button("Buscar", key="busq_btn", use_container_width=True)
 
-        if busq_btn and busq_texto.strip():
-            if df_roles.empty:
-                st.warning("Catálogo de roles no disponible.")
-            else:
-                st.session_state["_busq_resultados"] = _buscar_catalogo_libre(
-                    busq_texto.strip(), df_roles, top_n=6
-                )
-                st.session_state["_busq_query"] = busq_texto.strip()
+        if busq_btn and busq_q.strip():
+            resultados = _buscar_catalogo_libre(busq_q.strip(), df_roles, top_n=6)
+            st.session_state["_busq_res"]   = resultados
+            st.session_state["_busq_query"] = busq_q.strip()
 
-        # Mostrar resultados de la última búsqueda
-        resultados_busq = st.session_state.get("_busq_resultados", [])
-        query_busq      = st.session_state.get("_busq_query", "")
-        if resultados_busq:
-            st.markdown(f"**Resultados para:** _{query_busq}_")
-            for ri, res in enumerate(resultados_busq):
-                ya_agregado = res["opt"] in st.session_state.busq_cat_agregados
-                ya_en_multisel = res["opt"] in (componentes_sel if not df_roles.empty else [])
-                confianza = "🟢" if res["score"] > 0.4 else ("🟡" if res["score"] > 0.2 else "🔴")
+        # Resultados
+        res_list  = st.session_state.get("_busq_res", [])
+        res_query = st.session_state.get("_busq_query", "")
+        if res_list:
+            st.markdown(f"<span style='color:#64748b;font-size:0.82rem'>Resultados para: <b>{res_query}</b></span>",
+                        unsafe_allow_html=True)
+            _todos_ya = set(st.session_state.get("busq_cat_agregados", []))
+            for ri, res in enumerate(res_list):
+                ya = res["opt"] in _todos_ya
+                conf = "🟢" if res["score"] > 0.4 else ("🟡" if res["score"] > 0.2 else "🔴")
+                hrs  = _horas_componente(res["opt"], integ_proy)
+                hrs_txt = f"TC={hrs['TC']} SC={hrs['SC']} PM={hrs['PM']}" if hrs else "horas N/D"
 
-                rc1, rc2, rc3 = st.columns([6, 2, 2])
-                with rc1:
+                rr1, rr2, rr3 = st.columns([5, 2, 2])
+                with rr1:
                     st.markdown(
-                        f"{confianza} **{res['opt']}** "
-                        f"<span style='color:#64748b;font-size:0.78rem'>({', '.join(res['inter'][:4])})</span>",
+                        f"{conf} **{res['opt']}**<br>"
+                        f"<span style='color:#64748b;font-size:0.75rem'>{hrs_txt} &nbsp;·&nbsp; "
+                        f"match: {', '.join(res['inter'][:3])}</span>",
                         unsafe_allow_html=True,
                     )
-                with rc2:
-                    if ya_agregado or ya_en_multisel:
-                        st.caption("✅ Ya agregado")
+                with rr2:
+                    if ya:
+                        st.caption("✅ Agregado")
                     else:
-                        if st.button("📦 Catálogo", key=f"add_cat_{ri}", use_container_width=True,
-                                     help="Añadir con horas del catálogo"):
+                        if st.button("📦 Catálogo", key=f"add_cat_{ri}", use_container_width=True):
                             st.session_state.busq_cat_agregados.append(res["opt"])
                             st.rerun()
-                with rc3:
-                    if st.button("🤖 Agregar IA", key=f"add_ia_{ri}", use_container_width=True,
-                                 help="Añadir como tarea a estimar con IA"):
+                with rr3:
+                    if st.button("🤖 Con IA", key=f"add_ia_{ri}", use_container_width=True,
+                                 help="Estimar horas con IA en vez del catálogo"):
                         st.session_state.tareas_extra.append(
                             {"texto": res["opt"], "tipo": "Implementación"}
                         )
                         st.rerun()
 
-            # Opción de agregar directamente como IA si no hay buenas coincidencias
+            # Si nada es lo que busca → agregar texto directo a IA
             st.markdown("---")
-            ci1, ci2 = st.columns([6, 2])
-            with ci1:
-                st.caption(f"¿No encontraste lo que buscas? Agrega **\"{query_busq}\"** como tarea IA")
-            with ci2:
-                if st.button("🤖 Estimar con IA", key="add_ia_query", use_container_width=True):
-                    st.session_state.tareas_extra.append(
-                        {"texto": query_busq, "tipo": "Implementación"}
-                    )
+            no1, no2 = st.columns([6, 2])
+            with no1:
+                st.caption(f"¿No es exactamente lo que buscas? Agrega **\"{res_query}\"** para que la IA lo estime")
+            with no2:
+                if st.button("🤖 Estimar IA", key="add_ia_query", use_container_width=True):
+                    st.session_state.tareas_extra.append({"texto": res_query, "tipo": "Implementación"})
                     st.rerun()
 
-        # Mostrar resumen de componentes agregados por búsqueda
-        if st.session_state.busq_cat_agregados:
-            st.markdown("**Agregados por búsqueda:**")
-            for bi, bopt in enumerate(st.session_state.busq_cat_agregados):
-                bb1, bb2 = st.columns([8, 1])
-                with bb1:
-                    st.markdown(f"📦 {bopt}")
-                with bb2:
-                    if st.button("✕", key=f"rm_busq_{bi}"):
-                        st.session_state.busq_cat_agregados.pop(bi)
-                        st.rerun()
+    # ── Columna derecha: selección directa ──────────
+    with p1b:
+        st.markdown("**📋 O selecciona directamente**")
+        if df_roles.empty:
+            st.warning("Catálogo no disponible.")
+            componentes_sel = []
+        else:
+            componentes_sel = st.multiselect(
+                "comp", options=opciones_cat, label_visibility="collapsed",
+                placeholder="Escribe para filtrar: PPL, Coapi, Plantillas...",
+                key="componentes_sel",
+            )
 
-    # ── Tareas adicionales (IA)
-    with col_extra:
-        st.subheader("✍️ Tareas Adicionales (IA)")
-        st.caption("Para actividades no en el catálogo. La IA estima con tickets históricos.")
+    # ── Resumen de todos los componentes del catálogo ─
+    _todos_comp = list(dict.fromkeys(componentes_sel + st.session_state.get("busq_cat_agregados", [])))
+    if _todos_comp:
+        st.markdown("**Componentes seleccionados:**")
+        for ci, opt in enumerate(_todos_comp):
+            hrs = _horas_componente(opt, integ_proy)
+            tot = (hrs["TC"] + hrs["SC"] + hrs["PM"]) if hrs else 0
+            origen_icon = "🔍" if opt in st.session_state.get("busq_cat_agregados", []) \
+                                   and opt not in componentes_sel else "📦"
+            tag_integ = f" _{hrs['integ']}_" if hrs and hrs["integ"] != integ_proy else ""
+            cv1, cv2 = st.columns([8, 1])
+            with cv1:
+                integ_warn = " ⚠️" if hrs and hrs["integ"] != integ_proy else ""
+                st.markdown(
+                    f"{origen_icon} **{opt}**{integ_warn}{tag_integ} "
+                    f"<span style='color:#64748b;font-size:0.78rem'>"
+                    f"TC={hrs['TC'] if hrs else '?'} · SC={hrs['SC'] if hrs else '?'} · "
+                    f"PM={hrs['PM'] if hrs else '?'} · **Total={tot}h**</span>",
+                    unsafe_allow_html=True,
+                )
+            with cv2:
+                if st.button("✕", key=f"rm_comp_{ci}"):
+                    if opt in st.session_state.busq_cat_agregados:
+                        st.session_state.busq_cat_agregados.remove(opt)
+                    # Si estaba en multiselect, no podemos quitarlo directamente
+                    # (Streamlit no lo permite); se muestra aviso
+                    st.rerun()
 
-        # Complejidad y Método IA solo afectan estas tareas
-        cx1, cx2 = st.columns(2)
-        with cx1:
-            cx_extra = st.select_slider("Complejidad", options=["baja", "media", "alta"], value="media", key="cx_proy",
-                help="Sesga la estimación IA: alta = más horas")
-        with cx2:
-            metodo_proy = st.selectbox("Método IA", ["faiss+xgb+catalog", "faiss+catalog", "faiss", "catalog"], key="met_proy",
-                help="Algoritmo para estimar las tareas adicionales")
+    # ═══════════════════════════════════════════════
+    # PASO 2 — Tareas adicionales con IA
+    # ═══════════════════════════════════════════════
+    st.divider()
+    st.markdown("### 🤖 Paso 2 · Tareas Adicionales (IA)")
+    st.caption("Para actividades que **no están en el catálogo**. La IA busca en tickets históricos similares.")
 
+    ia_c1, ia_c2 = st.columns([2, 3])
+    with ia_c1:
+        cx_extra = st.select_slider(
+            "Complejidad", options=["baja", "media", "alta"], value="media", key="cx_proy",
+            help="Baja = −15% horas · Alta = +20% horas",
+        )
+        metodo_proy = st.selectbox(
+            "Método IA", ["faiss+xgb+catalog", "faiss+catalog", "faiss", "catalog"],
+            key="met_proy", help="faiss+xgb+catalog = más preciso",
+        )
+
+    with ia_c2:
         tareas_ed = []
         for i, t in enumerate(st.session_state.tareas_extra):
-            if isinstance(t, dict):
-                t_texto = t.get("texto", "")
-                t_tipo  = t.get("tipo", "Implementación")
-            else:
-                t_texto, t_tipo = t, "Implementación"
-
+            t_texto = t.get("texto", "") if isinstance(t, dict) else t
+            t_tipo  = t.get("tipo", "Implementación") if isinstance(t, dict) else "Implementación"
             ct, ctipo, cd = st.columns([4, 2, 1])
             with ct:
                 val = st.text_input(
@@ -1086,22 +1078,26 @@ with tab_proy:
             st.session_state.tareas_extra.append({"texto": "", "tipo": "Implementación"})
             st.rerun()
 
-    # ── Botón estimar ────────────────────────────────
+    # ── Botón estimar ─────────────────────────────────
     st.divider()
+    _tiene_algo = bool(_todos_comp or any(
+        (t.get("texto","") if isinstance(t,dict) else t).strip()
+        for t in st.session_state.tareas_extra
+    ))
     _, col_btn = st.columns([4, 1])
     with col_btn:
-        btn_proy = st.button("🚀 Estimar Proyecto", type="primary", use_container_width=True, key="btn_proy")
+        btn_proy = st.button(
+            "🚀 Estimar Proyecto", type="primary",
+            use_container_width=True, key="btn_proy",
+            disabled=not _tiene_algo,
+        )
 
     # ── Cálculo ──────────────────────────────────────
     if btn_proy:
         filas_res: list[dict] = []
 
-        # 1) Componentes del catálogo: multiselect + agregados por búsqueda libre
-        _todos_componentes = list(dict.fromkeys(
-            (componentes_sel if not df_roles.empty else []) +
-            st.session_state.get("busq_cat_agregados", [])
-        ))
-        for opt in _todos_componentes:
+        # 1) Componentes del catálogo (multiselect + búsqueda libre, sin duplicados)
+        for opt in _todos_comp:
             paq, esc = opt.split(" · ", 1)
             sub = df_roles[(df_roles["paquete"] == paq) & (df_roles["escenario"] == esc)]
             m = sub[sub["integracion"] == integ_proy]
@@ -1117,7 +1113,7 @@ with tab_proy:
                 _origen = (
                     "🔍 Búsqueda"
                     if opt in st.session_state.get("busq_cat_agregados", [])
-                       and opt not in (componentes_sel if not df_roles.empty else [])
+                       and opt not in componentes_sel
                     else "📦 Catálogo"
                 )
                 filas_res.append({
