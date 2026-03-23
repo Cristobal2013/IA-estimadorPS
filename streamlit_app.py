@@ -380,25 +380,65 @@ def _estimar_texto(texto, tag, metodo, complexity, backend):
     except Exception:
         horas_xgb = 0.0
 
+    # ── Confianza FAISS (similitud del vecino más cercano) ────────────
+    sim_top = top_tickets[0]["sim"] if top_tickets else 0.0
+
     if metodo == "faiss":
         final = horas_faiss
     elif metodo == "catalog":
         final = horas_catalog
     elif metodo == "faiss+catalog":
-        final = 0.8 * horas_faiss + 0.2 * horas_catalog
-    else:  # faiss+xgb+catalog
-        if horas_xgb > 0:
-            final = 0.45 * horas_faiss + 0.40 * horas_xgb + 0.15 * horas_catalog
+        # Pesos adaptativos: si FAISS no es confiable, catálogo gana peso
+        if sim_top >= 0.75:
+            final = 0.85 * horas_faiss + 0.15 * horas_catalog
+        elif sim_top >= 0.55:
+            final = 0.75 * horas_faiss + 0.25 * horas_catalog
         else:
-            final = 0.8 * horas_faiss + 0.2 * horas_catalog
+            final = 0.55 * horas_faiss + 0.45 * horas_catalog
+    else:  # faiss+xgb+catalog — pesos adaptativos por confianza FAISS
+        if horas_xgb > 0:
+            if sim_top >= 0.75:        # alta confianza FAISS
+                w_f, w_x, w_c = 0.55, 0.35, 0.10
+            elif sim_top >= 0.55:      # confianza media
+                w_f, w_x, w_c = 0.45, 0.35, 0.20
+            else:                      # baja confianza: catálogo toma más peso
+                w_f, w_x, w_c = 0.30, 0.30, 0.40
+            # Si no hay match en catálogo, redistribuir su peso a FAISS/XGB
+            if horas_catalog == 0.0:
+                w_f += w_c * 0.6
+                w_x += w_c * 0.4
+                w_c = 0.0
+            final = w_f * horas_faiss + w_x * horas_xgb + w_c * horas_catalog
+        else:
+            if sim_top >= 0.75:
+                final = 0.85 * horas_faiss + 0.15 * horas_catalog
+            elif sim_top >= 0.55:
+                final = 0.75 * horas_faiss + 0.25 * horas_catalog
+            else:
+                final = 0.55 * horas_faiss + 0.45 * horas_catalog
 
     # Multiplicador de complejidad aplicado siempre al resultado final
     cx_mult = {"baja": 0.85, "media": 1.00, "alta": 1.20}
     final = final * cx_mult.get(complexity, 1.00)
 
+    # ── Rango desde horas reales de vecinos (no multiplicadores fijos) ──
+    # Si tenemos ≥3 vecinos → rango = percentil 25-75 de sus horas
+    # Si tenemos 2          → rango = min-max de sus horas
+    # Si tenemos 0-1        → ±20% de la estimación final
     hs = [item["hours"] for item in top_tickets] if top_tickets else []
-    rango_min = max(0, math.ceil(final * 0.75)) if len(hs) >= 2 else math.ceil(final)
-    rango_max = math.ceil(final * 1.35) if len(hs) >= 2 else math.ceil(final)
+    if len(hs) >= 3:
+        rango_min = max(1, int(math.ceil(float(sorted(hs)[0]))))
+        rango_max = int(math.ceil(float(sorted(hs)[-1])))
+        # Usar p25-p75 si el spread es muy amplio (>3x)
+        if rango_max > rango_min * 3:
+            rango_min = max(1, int(math.ceil(sorted(hs)[len(hs)//4])))
+            rango_max = int(math.ceil(sorted(hs)[3*len(hs)//4]))
+    elif len(hs) == 2:
+        rango_min = max(1, int(math.ceil(min(hs))))
+        rango_max = int(math.ceil(max(hs)))
+    else:
+        rango_min = max(1, int(math.ceil(final * 0.80)))
+        rango_max = int(math.ceil(final * 1.25))
 
     return {
         "horas": final,

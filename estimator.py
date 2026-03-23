@@ -518,17 +518,31 @@ class EmbeddingsFaissEstimator:
         return est, neigh
 
 # ---------- Orquestación de entrenamiento ----------
-MAX_HOURS = float(os.environ.get("MAX_HOURS", "500"))  # filtra outliers extremos
+MAX_HOURS = float(os.environ.get("MAX_HOURS", "500"))  # hard cap absoluto antes de winsorizar
 
 def _build_from_frame(tag: str, df: pd.DataFrame) -> int:
     if df.empty:
         pd.DataFrame(columns=["text","hours","ticket","source"]).to_csv(_dataset_path(tag), index=False, encoding="utf-8")
         return 0
-    # Filtra tickets sin horas registradas y outliers extremos
-    df = df[df["hours"].apply(lambda x: x is not None and not pd.isna(x) and 0 < float(x) <= MAX_HOURS)].reset_index(drop=True)
+    # Filtra tickets sin horas y outliers absolutos (>MAX_HOURS)
+    df = df[df["hours"].apply(lambda x: x is not None and not pd.isna(x) and 0 < float(x) <= MAX_HOURS)].copy().reset_index(drop=True)
     if df.empty:
         pd.DataFrame(columns=["text","hours","ticket","source"]).to_csv(_dataset_path(tag), index=False, encoding="utf-8")
         return 0
+
+    # ── Winsorización al percentil 95 ──────────────────────────────────
+    # En vez de excluir tickets con muchas horas (que son referencia válida),
+    # se capean sus horas al p95 del conjunto. Así el modelo no se sesga
+    # hacia arriba por proyectos atípicamente grandes, pero los tickets
+    # siguen existiendo como vecinos en FAISS.
+    hours_arr = np.array([float(h) for h in df["hours"].tolist()])
+    p95 = float(np.percentile(hours_arr, 95))
+    p95 = max(p95, 8.0)   # garantiza mínimo 8h como techo (datasets muy pequeños)
+    capped = int((hours_arr > p95).sum())
+    if capped > 0:
+        print(f"[INFO] Winsorización {tag}: p95={p95:.1f}h, {capped} registro(s) capeado(s) de {len(hours_arr)}.")
+    df["hours"] = np.clip(hours_arr, 0.0, p95)
+
     texts = df["text"].astype(str).tolist()
     hours = [float(h) for h in df["hours"].tolist()]
 
