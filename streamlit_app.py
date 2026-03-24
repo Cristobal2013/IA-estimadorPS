@@ -713,9 +713,11 @@ def _overlap_score(a: str, b: str) -> float:
 
 def _deduplicar_filas(filas: list) -> tuple:
     """
-    Detecta duplicados entre tareas IA y componentes de catálogo.
+    Detecta duplicados y trabajo compartido entre todos los ítems.
 
     Reglas:
+    • Cat vs Cat mismo paquete: TC del 2º ítem en adelante −25% (setup compartido)
+    • Cat vs Cat texto >= 0.65: alerta de posible duplicado, sin modificar horas
     • IA vs Catálogo >= 0.65 → reduce horas IA en (solapamiento × horas), marca motivo
     • IA vs Catálogo 0.40–0.65 → aviso en Referencia IA, sin tocar horas
     • IA vs IA        >= 0.70 → fusiona: la de más horas absorbe a la otra (horas=0)
@@ -726,9 +728,46 @@ def _deduplicar_filas(filas: list) -> tuple:
     filas = [f.copy() for f in filas]
     alertas: list[str] = []
 
-    cat_rows = [f for f in filas if f["Origen"] in _CAT]
+    cat_idx  = [i for i, f in enumerate(filas) if f["Origen"] in _CAT]
+    cat_rows = [filas[i] for i in cat_idx]
     ia_idx   = [i for i, f in enumerate(filas) if f["Origen"] not in _CAT
-                and "✏️ Manual" not in f["Origen"]]  # no tocar ajustes manuales
+                and "✏️ Manual" not in f["Origen"]]
+
+    # ── Paso 0: Catálogo vs Catálogo ──────────────────
+    # a) Duplicado textual (≥ 0.65): alerta sin modificar
+    # b) Mismo paquete base: TC del ítem posterior −25% por setup compartido
+    paquetes_vistos: dict[str, int] = {}   # paquete_base → índice del primero
+
+    for i in cat_idx:
+        f = filas[i]
+        nombre  = f["Paquete / Tarea"]
+        paquete = nombre.split(" · ")[0].strip() if " · " in nombre else nombre
+
+        # a) Solapamiento textual alto con cualquier ítem anterior del catálogo
+        for j in cat_idx:
+            if j >= i:
+                break
+            s = _overlap_score(nombre, filas[j]["Paquete / Tarea"])
+            if s >= 0.65:
+                alertas.append(
+                    f"⚠️ **{nombre}** es {int(s*100)}% similar a "
+                    f"**{filas[j]['Paquete / Tarea']}** — verifica si no son el mismo componente"
+                )
+
+        # b) Mismo paquete base → descuento de setup en TC
+        if paquete in paquetes_vistos:
+            orig_tc = f["TC (h)"]
+            f["TC (h)"] = max(0, int(round(orig_tc * 0.75)))
+            ahorro_tc = orig_tc - f["TC (h)"]
+            if ahorro_tc > 0:
+                f["Total (h)"] = f["TC (h)"] + f["SC (h)"] + f["PM (h)"]
+                alertas.append(
+                    f"**{nombre}** comparte setup de plataforma con "
+                    f"**{filas[paquetes_vistos[paquete]]['Paquete / Tarea']}** "
+                    f"— TC reducido {orig_tc}h → {f['TC (h)']}h (−{ahorro_tc}h setup duplicado)"
+                )
+        else:
+            paquetes_vistos[paquete] = i
 
     # ── Paso 1: IA vs Catálogo ────────────────────────
     for i in ia_idx:
