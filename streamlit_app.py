@@ -975,10 +975,9 @@ def _buscar_catalogo_libre(texto: str, df_roles: pd.DataFrame, top_n: int = 6) -
 # ESTADO DE SESIÓN
 # ══════════════════════════════════════════════════════
 for _k, _v in {
-    "resultado_libre": None,
+    "resultado_libre":    None,
     "resultado_proyecto": None,
-    "tareas_extra": [{"texto": "", "tipo": "Implementación"}],
-    "busq_cat_agregados": [],   # componentes del catálogo agregados por búsqueda libre
+    "_proy_propuestos":   None,
 }.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -1037,103 +1036,149 @@ with tab_proy:
 
     metodo_proy = "faiss+xgb+catalog"  # siempre el método más preciso
 
+    # Botón de búsqueda (primer paso)
     _, col_btn = st.columns([4, 1])
     with col_btn:
-        btn_proy = st.button(
-            "🚀 Estimar Proyecto", type="primary",
-            use_container_width=True, key="btn_proy",
+        btn_buscar = st.button(
+            "🔍 Buscar componentes", type="primary",
+            use_container_width=True, key="btn_buscar",
             disabled=not descr_proy.strip(),
         )
 
-    # ── Cálculo ──────────────────────────────────────
-    if btn_proy:
-        filas_res: list[dict] = []
-        texto_est = descr_proy.strip()
-
-        # 1) Catálogo — búsqueda automática por descripción
+    # ── Paso 1: búsqueda y propuesta de catálogo ─────
+    if btn_buscar and descr_proy.strip():
         with st.spinner("🔍 Buscando componentes en catálogo..."):
-            cat_hits = _buscar_catalogo_libre(texto_est, df_roles, top_n=8)
-            componentes_auto = [h["opt"] for h in cat_hits if h["score"] >= 0.40]
+            cat_hits = _buscar_catalogo_libre(descr_proy.strip(), df_roles, top_n=5)
+        propuestos = [h for h in cat_hits if h["score"] >= 0.50]
+        st.session_state["_proy_propuestos"] = propuestos
+        st.session_state["_proy_descr"]      = descr_proy.strip()
+        st.session_state["_proy_nombre"]     = nombre_proy
+        st.session_state["_proy_integ"]      = integ_proy
+        st.session_state["_proy_cx"]         = cx_extra
+        st.session_state.resultado_proyecto  = None
 
-        for opt in componentes_auto:
-            paq, esc = opt.split(" · ", 1)
-            sub = df_roles[(df_roles["paquete"] == paq) & (df_roles["escenario"] == esc)]
-            m = sub[sub["integracion"] == integ_proy]
-            if m.empty:
-                m = sub[sub["integracion"] == "Estandar"]
-            if m.empty and not sub.empty:
-                m = sub.iloc[:1]
-            if not m.empty:
-                row = m.iloc[0]
-                _tc = int(round(float(row["tc"])))
-                _sc = int(round(float(row["sc"])))
-                _pm = int(round(float(row["pm"])))
-                filas_res.append({
-                    "Origen":          "📦 Catálogo",
-                    "Paquete / Tarea": f"{paq} · {esc}",
-                    "Integración":     row["integracion"],
-                    "TC (h)":          _tc,
-                    "SC (h)":          _sc,
-                    "PM (h)":          _pm,
-                    "Total (h)":       _tc + _sc + _pm,
-                    "Referencia IA":   "—",
-                })
+    # ── Paso 2: confirmación de componentes ──────────
+    propuestos = st.session_state.get("_proy_propuestos")
+    if propuestos is not None:
+        texto_est  = st.session_state.get("_proy_descr", descr_proy.strip())
+        integ_conf = st.session_state.get("_proy_integ", integ_proy)
+        cx_conf    = st.session_state.get("_proy_cx", cx_extra)
 
-        # 2) IA — estimar la descripción completa
-        with st.spinner("🧠 Estimando con IA..."):
-            try:
-                backend = _lazy_backend()
-                if not backend.get("ok"):
-                    st.error(f"Error cargando motor IA: {backend.get('err')}")
-                else:
-                    r = _estimar_texto(texto_est, "implementacion", metodo_proy, cx_extra, backend)
-                    horas_ia = max(1, math.ceil(r["horas"]))
-                    top1 = r["top"][0] if r["top"] else None
-
-                    sim_val   = top1["sim"] if top1 else 0
-                    confianza = "🟢 Alta" if sim_val >= 0.80 else ("🟡 Media" if sim_val >= 0.60 else "🔴 Baja")
-                    rango     = f"{r['rango_min']}-{r['rango_max']}h"
-                    ref       = f"{confianza} · {rango}"
-                    if top1:
-                        ref += f" · Ref:{top1['ticket']}"
-
-                    tc_h = int(round(horas_ia * 0.75))
-                    sc_h = int(round(horas_ia * 0.20))
-                    pm_h = int(round(horas_ia * 0.05))
-
-                    filas_res.append({
-                        "Origen":          "🤖 IA",
-                        "Paquete / Tarea": texto_est[:80] + ("..." if len(texto_est) > 80 else ""),
-                        "Integración":     "Implementación",
-                        "TC (h)":          tc_h,
-                        "SC (h)":          sc_h,
-                        "PM (h)":          pm_h,
-                        "Total (h)":       tc_h + sc_h + pm_h,
-                        "Referencia IA":   ref,
-                    })
-            except Exception as e:
-                st.error(f"Error IA: {e}")
-
-        if not filas_res:
-            st.warning("⚠️ No se encontraron resultados. Intenta con otra descripción.")
+        st.divider()
+        if propuestos:
+            st.markdown(
+                f"**📦 Encontré {len(propuestos)} componente(s) en catálogo. "
+                "Desmarca los que no aplican:**"
+            )
+            seleccionados = []
+            for hi, h in enumerate(propuestos):
+                hrs = None
+                if " · " in h["opt"]:
+                    paq_h, esc_h = h["opt"].split(" · ", 1)
+                    sub_h = df_roles[(df_roles["paquete"] == paq_h) & (df_roles["escenario"] == esc_h)]
+                    m_h = sub_h[sub_h["integracion"] == integ_conf]
+                    if m_h.empty: m_h = sub_h[sub_h["integracion"] == "Estandar"]
+                    if m_h.empty and not sub_h.empty: m_h = sub_h.iloc[:1]
+                    if not m_h.empty:
+                        r_h = m_h.iloc[0]
+                        hrs = {"TC": int(round(float(r_h["tc"]))),
+                               "SC": int(round(float(r_h["sc"]))),
+                               "PM": int(round(float(r_h["pm"])))}
+                conf_icon = "🟢" if h["score"] >= 0.65 else ("🟡" if h["score"] >= 0.50 else "🔴")
+                hrs_txt = (f"TC={hrs['TC']} SC={hrs['SC']} PM={hrs['PM']} "
+                           f"**Total={hrs['TC']+hrs['SC']+hrs['PM']}h**") if hrs else "horas N/D"
+                checked = st.checkbox(
+                    f"{conf_icon} **{h['opt']}** — {hrs_txt}",
+                    value=True, key=f"chk_prop_{hi}",
+                )
+                if checked:
+                    seleccionados.append(h["opt"])
         else:
-            # ── Deduplicación inteligente ─────────────────
-            filas_res, alertas_dup = _deduplicar_filas(filas_res)
-            if alertas_dup:
-                with st.expander(
-                    f"🔄 {len(alertas_dup)} ajuste(s) automático(s) para evitar duplicados",
-                    expanded=True,
-                ):
-                    st.caption("La IA detectó solapamientos entre catálogo y estimación. "
-                               "Las horas se ajustaron automáticamente.")
-                    for a in alertas_dup:
-                        st.markdown(f"• {a}")
+            st.info("No encontré componentes del catálogo que coincidan. La IA estimará el proyecto completo.")
+            seleccionados = []
 
-            st.session_state.resultado_proyecto = {
-                "filas":       filas_res,
-                "nombre":      nombre_proy,
-                "integracion": integ_proy,
-            }
+        _, col_calc = st.columns([4, 1])
+        with col_calc:
+            btn_calcular = st.button(
+                "🚀 Calcular estimación", type="primary",
+                use_container_width=True, key="btn_calcular",
+            )
+
+        # ── Paso 3: cálculo final ─────────────────────
+        if btn_calcular:
+            filas_res: list[dict] = []
+
+            # Componentes confirmados del catálogo
+            for opt in seleccionados:
+                paq, esc = opt.split(" · ", 1)
+                sub = df_roles[(df_roles["paquete"] == paq) & (df_roles["escenario"] == esc)]
+                m = sub[sub["integracion"] == integ_conf]
+                if m.empty: m = sub[sub["integracion"] == "Estandar"]
+                if m.empty and not sub.empty: m = sub.iloc[:1]
+                if not m.empty:
+                    row = m.iloc[0]
+                    _tc = int(round(float(row["tc"])))
+                    _sc = int(round(float(row["sc"])))
+                    _pm = int(round(float(row["pm"])))
+                    filas_res.append({
+                        "Origen":          "📦 Catálogo",
+                        "Paquete / Tarea": f"{paq} · {esc}",
+                        "Integración":     row["integracion"],
+                        "TC (h)":          _tc,
+                        "SC (h)":          _sc,
+                        "PM (h)":          _pm,
+                        "Total (h)":       _tc + _sc + _pm,
+                        "Referencia IA":   "—",
+                    })
+
+            # IA para el alcance completo
+            with st.spinner("🧠 Estimando con IA..."):
+                try:
+                    backend = _lazy_backend()
+                    if not backend.get("ok"):
+                        st.error(f"Error cargando motor IA: {backend.get('err')}")
+                    else:
+                        r = _estimar_texto(texto_est, "implementacion", metodo_proy, cx_conf, backend)
+                        horas_ia = max(1, math.ceil(r["horas"]))
+                        top1 = r["top"][0] if r["top"] else None
+                        sim_val   = top1["sim"] if top1 else 0
+                        confianza = "🟢 Alta" if sim_val >= 0.80 else ("🟡 Media" if sim_val >= 0.60 else "🔴 Baja")
+                        rango     = f"{r['rango_min']}-{r['rango_max']}h"
+                        ref       = f"{confianza} · {rango}"
+                        if top1: ref += f" · Ref:{top1['ticket']}"
+                        tc_h = int(round(horas_ia * 0.75))
+                        sc_h = int(round(horas_ia * 0.20))
+                        pm_h = int(round(horas_ia * 0.05))
+                        filas_res.append({
+                            "Origen":          "🤖 IA",
+                            "Paquete / Tarea": texto_est[:80] + ("..." if len(texto_est) > 80 else ""),
+                            "Integración":     "Implementación",
+                            "TC (h)":          tc_h,
+                            "SC (h)":          sc_h,
+                            "PM (h)":          pm_h,
+                            "Total (h)":       tc_h + sc_h + pm_h,
+                            "Referencia IA":   ref,
+                        })
+                except Exception as e:
+                    st.error(f"Error IA: {e}")
+
+            if not filas_res:
+                st.warning("⚠️ No se encontraron resultados.")
+            else:
+                filas_res, alertas_dup = _deduplicar_filas(filas_res)
+                if alertas_dup:
+                    with st.expander(
+                        f"🔄 {len(alertas_dup)} ajuste(s) para evitar duplicados", expanded=True
+                    ):
+                        st.caption("La IA ajustó horas solapadas entre catálogo e IA.")
+                        for a in alertas_dup:
+                            st.markdown(f"• {a}")
+                st.session_state.resultado_proyecto = {
+                    "filas":       filas_res,
+                    "nombre":      st.session_state.get("_proy_nombre", nombre_proy),
+                    "integracion": integ_conf,
+                }
+                st.session_state["_proy_propuestos"] = None
 
     # ── Resultados del proyecto ──────────────────────
     if st.session_state.resultado_proyecto:
