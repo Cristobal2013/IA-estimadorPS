@@ -77,11 +77,34 @@ def _get_table_df(table_name: str, csv_fallback: Path) -> pd.DataFrame:
     return pd.DataFrame()
 
 
-MODEL_NAME   = os.environ.get("EMB_MODEL", "sentence-transformers/all-mpnet-base-v2")
+MODEL_NAME   = os.environ.get("EMB_MODEL", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
 MAX_SEQ_LEN  = int(os.environ.get("MAX_SEQ_LEN", "384"))
 EMB_BATCH    = int(os.environ.get("EMB_BATCH", "8"))
 SIM_THRESHOLD = float(os.environ.get("SIM_THRESHOLD", "0.5"))  # descarta vecinos poco similares
 LAZY_BOOT    = os.environ.get("LAZY_BOOT", "1") == "1"
+
+# ---------- Limpieza de texto (Jira markup + ruido) ----------
+_JIRA_MARKUP = re.compile(
+    r'\{[a-z]+(?::[^\}]*)?\}'          # {code}, {color:#xxx}, {panel}, etc.
+    r'|h[1-6]\.\s*'                     # h1. h2. h3. ... (encabezados Jira)
+    r'|\[~[^\]]+\]'                     # menciones [~usuario]
+    r'|\[(?:[^\|]+\|)?(?:https?://[^\]]+)\]'  # links [texto|url] o [url]
+    r'|!([^!]+)!'                       # imágenes !nombre.png!
+    r'|\|\|',                           # separadores de tabla ||
+    re.IGNORECASE
+)
+_JIRA_INLINE = re.compile(r'[*_\+\-~^]{1,2}([^*_\+\~^]+)[*_\+\-~^]{1,2}')
+
+def _clean_text(text: str) -> str:
+    """Elimina markup Jira y ruido para obtener texto semántico limpio."""
+    t = str(text or "")
+    t = _JIRA_MARKUP.sub(" ", t)
+    t = _JIRA_INLINE.sub(r'\1', t)       # *bold* → bold, _italic_ → italic
+    t = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', t)   # [texto](url) markdown
+    t = re.sub(r'https?://\S+', '', t)   # URLs sueltas
+    t = re.sub(r'[\r\n\t]+', ' ', t)     # saltos de línea
+    t = re.sub(r'\s{2,}', ' ', t)        # espacios múltiples
+    return t.strip()
 
 # ---------- Embeddings (singleton) ----------
 _MODEL: Optional[SentenceTransformer] = None
@@ -173,8 +196,9 @@ def predict_xgb(text: str, tag: str) -> float:
         import pickle
         with open(p, "rb") as f:
             model = pickle.load(f)
-        emb  = _embed_texts([text])
-        feat = _extract_features(text).reshape(1, -1)
+        clean = _clean_text(text)
+        emb  = _embed_texts([clean])
+        feat = _extract_features(clean).reshape(1, -1)
         X    = np.hstack([emb, feat])
         pred = float(model.predict(X)[0])
         return max(0.0, pred)
@@ -483,7 +507,7 @@ class EmbeddingsFaissEstimator:
     def predict(self, text: str, k: int = 5) -> Tuple[float, List[Tuple[int,float,float]]]:
         if self.index is None or self.hours is None:
             raise RuntimeError("Índice no cargado")
-        q = _embed_texts([text])
+        q = _embed_texts([_clean_text(text)])
         D, I = self.index.search(q, k)
         sims = D[0].tolist(); idxs = I[0].tolist()
         neigh = []
@@ -543,7 +567,7 @@ def _build_from_frame(tag: str, df: pd.DataFrame) -> int:
         print(f"[INFO] Winsorización {tag}: p95={p95:.1f}h, {capped} registro(s) capeado(s) de {len(hours_arr)}.")
     df["hours"] = np.clip(hours_arr, 0.0, p95)
 
-    texts = df["text"].astype(str).tolist()
+    texts = [_clean_text(t) for t in df["text"].astype(str).tolist()]
     hours = [float(h) for h in df["hours"].tolist()]
 
     # Intenta cargar embeddings desde caché (evita recalcular si los datos no cambiaron)
