@@ -1017,214 +1017,45 @@ with tab_proy:
             help="Full ASP = menor TC, On Premise = mayor TC",
         )
 
-    st.divider()
+    # ── Descripción del alcance ────────────────────────
+    descr_proy = st.text_area(
+        "Describe el alcance del proyecto",
+        height=140,
+        placeholder=(
+            "Ej: Implementar PPL con plantillas personalizadas, certificado digital, "
+            "parametría fiscal y soporte post go-live..."
+        ),
+        key="descr_proy",
+    )
 
-    # ── Construir opciones del catálogo ──────────────
-    opciones_cat: list[str] = []
-    if not df_roles.empty:
-        seen_opts: set = set()
-        for _, row in df_roles.iterrows():
-            opt = f"{row['paquete']} · {row['escenario']}"
-            if opt not in seen_opts:
-                seen_opts.add(opt)
-                opciones_cat.append(opt)
-
-    # helper: resolver horas de un componente según integración
-    def _horas_componente(opt: str, integ: str) -> dict | None:
-        if df_roles.empty or " · " not in opt:
-            return None
-        paq, esc = opt.split(" · ", 1)
-        sub = df_roles[(df_roles["paquete"] == paq) & (df_roles["escenario"] == esc)]
-        m = sub[sub["integracion"] == integ]
-        if m.empty: m = sub[sub["integracion"] == "Estandar"]
-        if m.empty and not sub.empty: m = sub.iloc[:1]
-        if m.empty: return None
-        r = m.iloc[0]
-        return {"TC": int(round(float(r["tc"]))), "SC": int(round(float(r["sc"]))),
-                "PM": int(round(float(r["pm"]))), "integ": r["integracion"]}
-
-    # ═══════════════════════════════════════════════
-    # PASO 1 — Buscar o seleccionar componentes
-    # ═══════════════════════════════════════════════
-    st.markdown("### 📦 Paso 1 · Componentes del Catálogo")
-    st.caption("Busca describiendo con tus palabras **o** selecciona directamente del listado.")
-
-    p1a, p1b = st.columns([3, 2])
-
-    # ── Columna izquierda: búsqueda por texto ────────
-    with p1a:
-        st.markdown("**🔍 Buscar por descripción**")
-        bc1, bc2 = st.columns([5, 1])
-        with bc1:
-            busq_q = st.text_input(
-                "busq", label_visibility="collapsed",
-                placeholder="Ej: plantillas facturas, certificado digital, go-live...",
-                key="busq_q",
-            )
-        with bc2:
-            st.markdown("<br>", unsafe_allow_html=True)
-            busq_btn = st.button("Buscar", key="busq_btn", use_container_width=True)
-
-        if busq_btn and busq_q.strip():
-            resultados = _buscar_catalogo_libre(busq_q.strip(), df_roles, top_n=6)
-            st.session_state["_busq_res"]   = resultados
-            st.session_state["_busq_query"] = busq_q.strip()
-
-        # Resultados
-        res_list  = st.session_state.get("_busq_res", [])
-        res_query = st.session_state.get("_busq_query", "")
-        if res_list:
-            st.markdown(f"<span style='color:#64748b;font-size:0.82rem'>Resultados para: <b>{res_query}</b></span>",
-                        unsafe_allow_html=True)
-            _todos_ya = set(st.session_state.get("busq_cat_agregados", []))
-            for ri, res in enumerate(res_list):
-                ya = res["opt"] in _todos_ya
-                conf = "🟢" if res["score"] > 0.4 else ("🟡" if res["score"] > 0.2 else "🔴")
-                hrs  = _horas_componente(res["opt"], integ_proy)
-                hrs_txt = f"TC={hrs['TC']} SC={hrs['SC']} PM={hrs['PM']}" if hrs else "horas N/D"
-
-                rr1, rr2, rr3 = st.columns([5, 2, 2])
-                with rr1:
-                    st.markdown(
-                        f"{conf} **{res['opt']}**<br>"
-                        f"<span style='color:#64748b;font-size:0.75rem'>{hrs_txt} &nbsp;·&nbsp; "
-                        f"match: {', '.join(res['inter'][:3])}</span>",
-                        unsafe_allow_html=True,
-                    )
-                with rr2:
-                    if ya:
-                        st.caption("✅ Agregado")
-                    else:
-                        if st.button("📦 Catálogo", key=f"add_cat_{ri}", use_container_width=True):
-                            st.session_state.busq_cat_agregados.append(res["opt"])
-                            st.rerun()
-                with rr3:
-                    if st.button("🤖 Con IA", key=f"add_ia_{ri}", use_container_width=True,
-                                 help="Estimar horas con IA en vez del catálogo"):
-                        st.session_state.tareas_extra.append(
-                            {"texto": res["opt"], "tipo": "Implementación"}
-                        )
-                        st.rerun()
-
-            # Si nada es lo que busca → agregar texto directo a IA
-            st.markdown("---")
-            no1, no2 = st.columns([6, 2])
-            with no1:
-                st.caption(f"¿No es exactamente lo que buscas? Agrega **\"{res_query}\"** para que la IA lo estime")
-            with no2:
-                if st.button("🤖 Estimar IA", key="add_ia_query", use_container_width=True):
-                    st.session_state.tareas_extra.append({"texto": res_query, "tipo": "Implementación"})
-                    st.rerun()
-
-    # ── Columna derecha: selección directa ──────────
-    with p1b:
-        st.markdown("**📋 O selecciona directamente**")
-        if df_roles.empty:
-            st.warning("Catálogo no disponible.")
-            componentes_sel = []
-        else:
-            componentes_sel = st.multiselect(
-                "comp", options=opciones_cat, label_visibility="collapsed",
-                placeholder="Escribe para filtrar: PPL, Coapi, Plantillas...",
-                key="componentes_sel",
-            )
-
-    # ── Resumen de todos los componentes del catálogo ─
-    _todos_comp = list(dict.fromkeys(componentes_sel + st.session_state.get("busq_cat_agregados", [])))
-    if _todos_comp:
-        st.markdown("**Componentes seleccionados:**")
-        for ci, opt in enumerate(_todos_comp):
-            hrs = _horas_componente(opt, integ_proy)
-            tot = (hrs["TC"] + hrs["SC"] + hrs["PM"]) if hrs else 0
-            origen_icon = "🔍" if opt in st.session_state.get("busq_cat_agregados", []) \
-                                   and opt not in componentes_sel else "📦"
-            tag_integ = f" _{hrs['integ']}_" if hrs and hrs["integ"] != integ_proy else ""
-            cv1, cv2 = st.columns([8, 1])
-            with cv1:
-                integ_warn = " ⚠️" if hrs and hrs["integ"] != integ_proy else ""
-                st.markdown(
-                    f"{origen_icon} **{opt}**{integ_warn}{tag_integ} "
-                    f"<span style='color:#64748b;font-size:0.78rem'>"
-                    f"TC={hrs['TC'] if hrs else '?'} · SC={hrs['SC'] if hrs else '?'} · "
-                    f"PM={hrs['PM'] if hrs else '?'} · **Total={tot}h**</span>",
-                    unsafe_allow_html=True,
-                )
-            with cv2:
-                if st.button("✕", key=f"rm_comp_{ci}"):
-                    if opt in st.session_state.busq_cat_agregados:
-                        st.session_state.busq_cat_agregados.remove(opt)
-                    # Si estaba en multiselect, no podemos quitarlo directamente
-                    # (Streamlit no lo permite); se muestra aviso
-                    st.rerun()
-
-    # ═══════════════════════════════════════════════
-    # PASO 2 — Tareas adicionales con IA
-    # ═══════════════════════════════════════════════
-    st.divider()
-    st.markdown("### 🤖 Paso 2 · Tareas Adicionales (IA)")
-    st.caption("Para actividades que **no están en el catálogo**. La IA busca en tickets históricos similares.")
-
-    ia_c1, ia_c2 = st.columns([2, 3])
-    with ia_c1:
+    # ── Opciones avanzadas (colapsadas por defecto) ────
+    with st.expander("⚙️ Opciones avanzadas"):
         cx_extra = st.select_slider(
             "Complejidad", options=["baja", "media", "alta"], value="media", key="cx_proy",
             help="Baja = −15% horas · Alta = +20% horas",
         )
-        metodo_proy = st.selectbox(
-            "Método IA", ["faiss+xgb+catalog", "faiss+catalog", "faiss", "catalog"],
-            key="met_proy", help="faiss+xgb+catalog = más preciso",
-        )
 
-    with ia_c2:
-        tareas_ed = []
-        for i, t in enumerate(st.session_state.tareas_extra):
-            t_texto = t.get("texto", "") if isinstance(t, dict) else t
-            t_tipo  = t.get("tipo", "Implementación") if isinstance(t, dict) else "Implementación"
-            ct, ctipo, cd = st.columns([4, 2, 1])
-            with ct:
-                val = st.text_input(
-                    f"t{i}", value=t_texto, key=f"textra_{i}",
-                    placeholder="Ej: Soporte post go-live...",
-                    label_visibility="collapsed",
-                )
-            with ctipo:
-                tipo_t = st.selectbox(
-                    "ti", ["Implementación", "Desarrollo"],
-                    index=0 if t_tipo == "Implementación" else 1,
-                    key=f"ttipo_{i}", label_visibility="collapsed",
-                )
-            with cd:
-                st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("✕", key=f"del_extra_{i}") and len(st.session_state.tareas_extra) > 1:
-                    st.session_state.tareas_extra.pop(i)
-                    st.rerun()
-            tareas_ed.append({"texto": val, "tipo": tipo_t})
-        st.session_state.tareas_extra = tareas_ed
+    metodo_proy = "faiss+xgb+catalog"  # siempre el método más preciso
 
-        if st.button("➕ Agregar tarea", key="add_extra"):
-            st.session_state.tareas_extra.append({"texto": "", "tipo": "Implementación"})
-            st.rerun()
-
-    # ── Botón estimar ─────────────────────────────────
-    st.divider()
-    _tiene_algo = bool(_todos_comp or any(
-        (t.get("texto","") if isinstance(t,dict) else t).strip()
-        for t in st.session_state.tareas_extra
-    ))
     _, col_btn = st.columns([4, 1])
     with col_btn:
         btn_proy = st.button(
             "🚀 Estimar Proyecto", type="primary",
             use_container_width=True, key="btn_proy",
-            disabled=not _tiene_algo,
+            disabled=not descr_proy.strip(),
         )
 
     # ── Cálculo ──────────────────────────────────────
     if btn_proy:
         filas_res: list[dict] = []
+        texto_est = descr_proy.strip()
 
-        # 1) Componentes del catálogo (multiselect + búsqueda libre, sin duplicados)
-        for opt in _todos_comp:
+        # 1) Catálogo — búsqueda automática por descripción
+        with st.spinner("🔍 Buscando componentes en catálogo..."):
+            cat_hits = _buscar_catalogo_libre(texto_est, df_roles, top_n=8)
+            componentes_auto = [h["opt"] for h in cat_hits if h["score"] >= 0.40]
+
+        for opt in componentes_auto:
             paq, esc = opt.split(" · ", 1)
             sub = df_roles[(df_roles["paquete"] == paq) & (df_roles["escenario"] == esc)]
             m = sub[sub["integracion"] == integ_proy]
@@ -1237,14 +1068,8 @@ with tab_proy:
                 _tc = int(round(float(row["tc"])))
                 _sc = int(round(float(row["sc"])))
                 _pm = int(round(float(row["pm"])))
-                _origen = (
-                    "🔍 Búsqueda"
-                    if opt in st.session_state.get("busq_cat_agregados", [])
-                       and opt not in componentes_sel
-                    else "📦 Catálogo"
-                )
                 filas_res.append({
-                    "Origen":          _origen,
+                    "Origen":          "📦 Catálogo",
                     "Paquete / Tarea": f"{paq} · {esc}",
                     "Integración":     row["integracion"],
                     "TC (h)":          _tc,
@@ -1254,83 +1079,43 @@ with tab_proy:
                     "Referencia IA":   "—",
                 })
 
-        # 2) Tareas adicionales → IA
-        tareas_validas = [
-            t if isinstance(t, dict) else {"texto": t, "tipo": "Implementación"}
-            for t in st.session_state.tareas_extra
-            if (t.get("texto", "") if isinstance(t, dict) else t).strip()
-        ]
-        if tareas_validas:
-            with st.spinner(f"🧠 Estimando {len(tareas_validas)} tarea(s) adicional(es)..."):
-                try:
-                    backend = _lazy_backend()
-                    if not backend.get("ok"):
-                        st.error(f"Error cargando motor IA: {backend.get('err')}")
-                    else:
-                        for tarea_item in tareas_validas:
-                            tarea  = tarea_item["texto"].strip()
-                            tipo_t = tarea_item.get("tipo", "Implementación")
+        # 2) IA — estimar la descripción completa
+        with st.spinner("🧠 Estimando con IA..."):
+            try:
+                backend = _lazy_backend()
+                if not backend.get("ok"):
+                    st.error(f"Error cargando motor IA: {backend.get('err')}")
+                else:
+                    r = _estimar_texto(texto_est, "implementacion", metodo_proy, cx_extra, backend)
+                    horas_ia = max(1, math.ceil(r["horas"]))
+                    top1 = r["top"][0] if r["top"] else None
 
-                            # ── Detectar ajuste manual por rol (ej: "5h SC reuniones")
-                            ajuste_manual = _parse_ajuste_rol(tarea)
-                            if ajuste_manual:
-                                _tc_m = int(round(ajuste_manual["tc"]))
-                                _sc_m = int(round(ajuste_manual["sc"]))
-                                _pm_m = int(round(ajuste_manual["pm"]))
-                                filas_res.append({
-                                    "Origen":          f"✏️ Manual ({ajuste_manual['rol']})",
-                                    "Paquete / Tarea": tarea,
-                                    "Integración":     tipo_t,
-                                    "TC (h)":          _tc_m,
-                                    "SC (h)":          _sc_m,
-                                    "PM (h)":          _pm_m,
-                                    "Total (h)":       _tc_m + _sc_m + _pm_m,
-                                    "Referencia IA":   f"Ajuste directo {ajuste_manual['rol']}",
-                                })
-                                continue
+                    sim_val   = top1["sim"] if top1 else 0
+                    confianza = "🟢 Alta" if sim_val >= 0.80 else ("🟡 Media" if sim_val >= 0.60 else "🔴 Baja")
+                    rango     = f"{r['rango_min']}-{r['rango_max']}h"
+                    ref       = f"{confianza} · {rango}"
+                    if top1:
+                        ref += f" · Ref:{top1['ticket']}"
 
-                            # ── Sin patrón de rol → estimar con FAISS/XGB
-                            tag_proy = _resolve_tag(tipo_t)
-                            r = _estimar_texto(tarea, tag_proy, metodo_proy, cx_extra, backend)
-                            horas_ia = max(1, math.ceil(r["horas"]))
-                            top1 = r["top"][0] if r["top"] else None
+                    tc_h = int(round(horas_ia * 0.75))
+                    sc_h = int(round(horas_ia * 0.20))
+                    pm_h = int(round(horas_ia * 0.05))
 
-                            # Confianza basada en similitud del ticket más cercano
-                            sim_val = top1["sim"] if top1 else 0
-                            if sim_val >= 0.80:
-                                confianza = "🟢 Alta"
-                            elif sim_val >= 0.60:
-                                confianza = "🟡 Media"
-                            else:
-                                confianza = "🔴 Baja"
-
-                            # Rango estimado
-                            rango = f"{r['rango_min']}-{r['rango_max']}h"
-
-                            ref = f"{confianza} · {rango}"
-                            if top1:
-                                ref += f" · Ref:{top1['ticket']}"
-
-                            # Distribución fija: la dificultad va a TC
-                            tc_h = int(round(horas_ia * 0.75))
-                            sc_h = int(round(horas_ia * 0.20))
-                            pm_h = int(round(horas_ia * 0.05))
-
-                            filas_res.append({
-                                "Origen":          f"🤖 IA ({tipo_t[:4]})",
-                                "Paquete / Tarea": tarea,
-                                "Integración":     tipo_t,
-                                "TC (h)":          tc_h,
-                                "SC (h)":          sc_h,
-                                "PM (h)":          pm_h,
-                                "Total (h)":       tc_h + sc_h + pm_h,
-                                "Referencia IA":   ref,
-                            })
-                except Exception as e:
-                    st.error(f"Error IA: {e}")
+                    filas_res.append({
+                        "Origen":          "🤖 IA",
+                        "Paquete / Tarea": texto_est[:80] + ("..." if len(texto_est) > 80 else ""),
+                        "Integración":     "Implementación",
+                        "TC (h)":          tc_h,
+                        "SC (h)":          sc_h,
+                        "PM (h)":          pm_h,
+                        "Total (h)":       tc_h + sc_h + pm_h,
+                        "Referencia IA":   ref,
+                    })
+            except Exception as e:
+                st.error(f"Error IA: {e}")
 
         if not filas_res:
-            st.warning("⚠️ Selecciona al menos un escenario del catálogo o agrega una tarea.")
+            st.warning("⚠️ No se encontraron resultados. Intenta con otra descripción.")
         else:
             # ── Deduplicación inteligente ─────────────────
             filas_res, alertas_dup = _deduplicar_filas(filas_res)
@@ -1339,8 +1124,8 @@ with tab_proy:
                     f"🔄 {len(alertas_dup)} ajuste(s) automático(s) para evitar duplicados",
                     expanded=True,
                 ):
-                    st.caption("La IA detectó tareas que se solapan con el catálogo u otras tareas IA. "
-                               "Las horas se ajustaron automáticamente. Puedes editarlas en la tabla.")
+                    st.caption("La IA detectó solapamientos entre catálogo y estimación. "
+                               "Las horas se ajustaron automáticamente.")
                     for a in alertas_dup:
                         st.markdown(f"• {a}")
 
@@ -1519,9 +1304,9 @@ with tab_libre:
         )
     with col_der:
         st.subheader("Configuración")
-        tipo_l    = st.selectbox("Tipo de Tarea", ["Desarrollo", "Implementación"], key="tipo_libre")
-        metodo_l  = st.selectbox("Método", ["faiss+xgb+catalog", "faiss+catalog", "faiss", "catalog"], key="met_libre")
+        tipo_l    = st.selectbox("Tipo de Tarea", ["Implementación", "Desarrollo"], key="tipo_libre")
         complex_l = st.select_slider("Complejidad", options=["baja", "media", "alta"], value="media", key="cx_libre")
+        metodo_l  = "faiss+xgb+catalog"  # siempre el método más preciso
         btn_libre = st.button("🚀 Calcular Estimación", use_container_width=True, type="primary", key="btn_libre")
 
     if btn_libre:
