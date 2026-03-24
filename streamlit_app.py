@@ -1016,7 +1016,8 @@ def _buscar_catalogo_libre(texto: str, df_roles: pd.DataFrame, top_n: int = 6) -
 for _k, _v in {
     "resultado_proyecto": None,
     "_proy_propuestos":   None,
-    "_proy_ia_result":    None,
+    "_proy_ia_impl":      None,
+    "_proy_ia_desq":      None,
 }.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -1083,23 +1084,29 @@ with tab_proy:
             disabled=not descr_proy.strip(),
         )
 
-    # ── Paso 1: búsqueda catálogo + tickets históricos ─
+    # ── Paso 1: búsqueda catálogo + tickets históricos (ambos índices) ─
     if btn_buscar and descr_proy.strip():
-        with st.spinner("🔍 Buscando en catálogo y tickets históricos..."):
-            cat_hits = _buscar_catalogo_libre(descr_proy.strip(), df_roles, top_n=5)
-            ia_result = None
+        with st.spinner("🔍 Buscando en catálogo y tickets históricos (Implementación + Desarrollo)..."):
+            cat_hits   = _buscar_catalogo_libre(descr_proy.strip(), df_roles, top_n=5)
+            ia_impl    = None
+            ia_desq    = None
             try:
                 backend = _lazy_backend()
                 if backend.get("ok"):
-                    ia_result = _estimar_texto(
+                    ia_impl = _estimar_texto(
                         descr_proy.strip(), "implementacion",
+                        "faiss+xgb+catalog", cx_extra, backend
+                    )
+                    ia_desq = _estimar_texto(
+                        descr_proy.strip(), "desarrollo",
                         "faiss+xgb+catalog", cx_extra, backend
                     )
             except Exception:
                 pass
         propuestos = [h for h in cat_hits if h["score"] >= 0.50]
         st.session_state["_proy_propuestos"] = propuestos
-        st.session_state["_proy_ia_result"]  = ia_result
+        st.session_state["_proy_ia_impl"]    = ia_impl
+        st.session_state["_proy_ia_desq"]    = ia_desq
         st.session_state["_proy_descr"]      = descr_proy.strip()
         st.session_state["_proy_nombre"]     = nombre_proy
         st.session_state["_proy_integ"]      = integ_proy
@@ -1112,7 +1119,10 @@ with tab_proy:
         texto_est  = st.session_state.get("_proy_descr", descr_proy.strip())
         integ_conf = st.session_state.get("_proy_integ", integ_proy)
         cx_conf    = st.session_state.get("_proy_cx", cx_extra)
-        ia_result  = st.session_state.get("_proy_ia_result")
+        ia_impl    = st.session_state.get("_proy_ia_impl")
+        ia_desq    = st.session_state.get("_proy_ia_desq")
+        # compat con sesiones antiguas que usaban _proy_ia_result
+        ia_result  = ia_impl or st.session_state.get("_proy_ia_result")
 
         st.divider()
         col_cat, col_hist = st.columns([3, 2])
@@ -1147,30 +1157,47 @@ with tab_proy:
                 if checked:
                     seleccionados.append(h["opt"])
 
-        # ── Columna derecha: tickets históricos ──────
+        # ── Columna derecha: tickets históricos (impl + desq) ──
         with col_hist:
             st.markdown("**🗃️ Tickets históricos similares**")
-            if ia_result and ia_result.get("top"):
-                for tick in ia_result["top"][:3]:
-                    sim_pct = int(tick["sim"] * 100)
-                    sim_icon = "🟢" if tick["sim"] >= 0.75 else ("🟡" if tick["sim"] >= 0.55 else "🔴")
-                    with st.expander(
-                        f"{sim_icon} **{tick['ticket']}** — {int(tick['hours'])}h · sim {sim_pct}%"
-                    ):
-                        st.caption(tick["text"][:300] + ("..." if len(tick["text"]) > 300 else ""))
-                rmin = ia_result.get("rango_min", 0)
-                rmax = ia_result.get("rango_max", 0)
-                horas_ia_pre = math.ceil(ia_result["horas"])
+
+            def _mostrar_tickets(res, etiqueta, color):
+                if not res or not res.get("top"):
+                    return
+                sim_top = res["top"][0]["sim"] if res["top"] else 0
+                if sim_top < 0.45:
+                    return
                 st.markdown(
-                    f"<div style='background:#f0f5fa;border-left:3px solid #00bcff;"
-                    f"padding:8px 12px;border-radius:6px;margin-top:8px'>"
-                    f"<span style='font-size:0.8rem;color:#5c6680'>Estimación IA basada en históricos</span><br>"
-                    f"<b style='font-size:1.3rem'>{horas_ia_pre}h</b> "
-                    f"<span style='color:#64748b;font-size:0.85rem'>rango {rmin}–{rmax}h</span>"
-                    f"</div>",
+                    f"<span style='background:{color};color:white;font-size:0.72rem;"
+                    f"padding:2px 8px;border-radius:10px'>{etiqueta}</span>",
                     unsafe_allow_html=True,
                 )
-            else:
+                for tick in res["top"][:2]:
+                    sim_pct  = int(tick["sim"] * 100)
+                    sim_icon = "🟢" if tick["sim"] >= 0.75 else ("🟡" if tick["sim"] >= 0.55 else "🔴")
+                    with st.expander(
+                        f"{sim_icon} **{tick['ticket']}** — {int(tick['hours'])}h · {sim_pct}%"
+                    ):
+                        st.caption(tick["text"][:280] + ("..." if len(tick["text"]) > 280 else ""))
+                h_est = math.ceil(res["horas"])
+                st.markdown(
+                    f"<div style='background:#f0f5fa;border-left:3px solid {color};"
+                    f"padding:6px 10px;border-radius:6px;margin:4px 0 10px 0'>"
+                    f"<span style='font-size:0.75rem;color:#5c6680'>IA {etiqueta}</span> "
+                    f"<b>{h_est}h</b> "
+                    f"<span style='color:#64748b;font-size:0.8rem'>"
+                    f"({res.get('rango_min',0)}–{res.get('rango_max',0)}h)</span></div>",
+                    unsafe_allow_html=True,
+                )
+
+            hay_tickets = False
+            if ia_impl and ia_impl.get("top") and ia_impl["top"][0]["sim"] >= 0.45:
+                _mostrar_tickets(ia_impl, "Implementación (PSTC)", "#0a0e33")
+                hay_tickets = True
+            if ia_desq and ia_desq.get("top") and ia_desq["top"][0]["sim"] >= 0.45:
+                _mostrar_tickets(ia_desq, "Desarrollo (CESQ)", "#00767a")
+                hay_tickets = True
+            if not hay_tickets:
                 st.caption("Sin tickets similares encontrados en el historial.")
 
         _, col_calc = st.columns([4, 1])
@@ -1207,35 +1234,35 @@ with tab_proy:
                         "Referencia IA":   "—",
                     })
 
-            # IA para el alcance completo (usa resultado pre-calculado en búsqueda)
-            r = ia_result
-            if r is None:
-                try:
-                    backend = _lazy_backend()
-                    if backend.get("ok"):
-                        r = _estimar_texto(texto_est, "implementacion", metodo_proy, cx_conf, backend)
-                except Exception as e:
-                    st.error(f"Error IA: {e}")
-            if r:
-                horas_ia = max(1, math.ceil(r["horas"]))
-                top1     = r["top"][0] if r["top"] else None
-                sim_val  = top1["sim"] if top1 else 0
-                confianza = "🟢 Alta" if sim_val >= 0.80 else ("🟡 Media" if sim_val >= 0.60 else "🔴 Baja")
-                ref = f"{confianza} · {r['rango_min']}-{r['rango_max']}h"
-                if top1: ref += f" · Ref:{top1['ticket']}"
-                tc_h = int(round(horas_ia * 0.75))
-                sc_h = int(round(horas_ia * 0.20))
-                pm_h = int(round(horas_ia * 0.05))
-                filas_res.append({
-                    "Origen":          "🤖 IA",
-                    "Paquete / Tarea": texto_est[:80] + ("..." if len(texto_est) > 80 else ""),
-                    "Integración":     "Implementación",
-                    "TC (h)":          tc_h,
-                    "SC (h)":          sc_h,
-                    "PM (h)":          pm_h,
-                    "Total (h)":       tc_h + sc_h + pm_h,
+            # IA — agrega fila por cada índice con match relevante
+            def _fila_ia(r, tipo_label, integ_label):
+                if not r or not r.get("top"):
+                    return None
+                top1 = r["top"][0]
+                if top1["sim"] < 0.45:
+                    return None
+                horas = max(1, math.ceil(r["horas"]))
+                sim_v = top1["sim"]
+                conf  = "🟢 Alta" if sim_v >= 0.80 else ("🟡 Media" if sim_v >= 0.60 else "🔴 Baja")
+                ref   = f"{conf} · {r['rango_min']}-{r['rango_max']}h · Ref:{top1['ticket']}"
+                return {
+                    "Origen":          f"🤖 IA ({tipo_label})",
+                    "Paquete / Tarea": texto_est[:75] + ("..." if len(texto_est) > 75 else ""),
+                    "Integración":     integ_label,
+                    "TC (h)":          int(round(horas * 0.75)),
+                    "SC (h)":          int(round(horas * 0.20)),
+                    "PM (h)":          int(round(horas * 0.05)),
+                    "Total (h)":       horas,
                     "Referencia IA":   ref,
-                })
+                }
+
+            for _r, _tl, _il in [
+                (ia_impl, "Impl", "Implementación"),
+                (ia_desq, "Desq", "Desarrollo"),
+            ]:
+                fila = _fila_ia(_r, _tl, _il)
+                if fila:
+                    filas_res.append(fila)
 
             if not filas_res:
                 st.warning("⚠️ No se encontraron resultados.")
