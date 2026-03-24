@@ -1165,7 +1165,7 @@ with tab_proy:
                 if not res or not res.get("top"):
                     return
                 sim_top = res["top"][0]["sim"] if res["top"] else 0
-                if sim_top < 0.45:
+                if sim_top < 0.55:
                     return
                 st.markdown(
                     f"<span style='background:{color};color:white;font-size:0.72rem;"
@@ -1191,10 +1191,10 @@ with tab_proy:
                 )
 
             hay_tickets = False
-            if ia_impl and ia_impl.get("top") and ia_impl["top"][0]["sim"] >= 0.45:
+            if ia_impl and ia_impl.get("top") and ia_impl["top"][0]["sim"] >= 0.55:
                 _mostrar_tickets(ia_impl, "Implementación (PSTC)", "#0a0e33")
                 hay_tickets = True
-            if ia_desq and ia_desq.get("top") and ia_desq["top"][0]["sim"] >= 0.45:
+            if ia_desq and ia_desq.get("top") and ia_desq["top"][0]["sim"] >= 0.55:
                 _mostrar_tickets(ia_desq, "Desarrollo (CESQ)", "#00767a")
                 hay_tickets = True
             if not hay_tickets:
@@ -1239,7 +1239,7 @@ with tab_proy:
                 if not r or not r.get("top"):
                     return None
                 top1 = r["top"][0]
-                if top1["sim"] < 0.45:
+                if top1["sim"] < 0.55:
                     return None
                 horas = max(1, math.ceil(r["horas"]))
                 sim_v = top1["sim"]
