@@ -77,7 +77,7 @@ def _get_table_df(table_name: str, csv_fallback: Path) -> pd.DataFrame:
     return pd.DataFrame()
 
 
-MODEL_NAME   = os.environ.get("EMB_MODEL", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
+MODEL_NAME   = os.environ.get("EMB_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 MAX_SEQ_LEN  = int(os.environ.get("MAX_SEQ_LEN", "384"))
 EMB_BATCH    = int(os.environ.get("EMB_BATCH", "8"))
 SIM_THRESHOLD = float(os.environ.get("SIM_THRESHOLD", "0.5"))  # descarta vecinos poco similares
